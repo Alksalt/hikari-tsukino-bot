@@ -1,0 +1,21 @@
+# User Profile
+<!-- This file is written and updated by the bot. Do not hand-edit during active sessions. -->
+<!-- Copy to USER.md on first run — the bot will maintain it from there. -->
+
+## basics
+- name: unknown (update when learned)
+- known preferences: none yet
+- relationship_stage: 0
+- meaningful_exchanges: 0
+
+## open_loops
+<!-- Time-sensitive things to follow up on -->
+<!-- Example: - has an interview on Friday -->
+none
+
+## known_facts
+<!-- Stable facts about the user the bot has confirmed -->
+<!-- Example: - works in ML, mentioned switching jobs -->
+none yet
+
+## last_updated: never

@@ -1,0 +1,26 @@
+# Secrets + environment
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Tools
+.pytest_cache/
+.ruff_cache/
+.tmp/
+
+# IDE / local config
+.claude/
+
+# Runtime data — personal, never committed
+data/USER.md
+data/MEMORY.md
+data/THOUGHTS.md
+data/HEARTBEAT.md
+data/episodes/*.md
+!data/episodes/.gitkeep

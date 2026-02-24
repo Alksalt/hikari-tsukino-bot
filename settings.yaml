@@ -1,0 +1,49 @@
+# Hikari Tsukino Bot — Global Settings
+# All tunables live here. No code changes needed to swap models or adjust behavior.
+
+models:
+  # OpenRouter model IDs — swap freely. See MODELS.md for full reference.
+  chat: "openai/gpt-4o-mini"         # main chat responses (cheap + follows instructions)
+  memory: "openai/gpt-4o-mini"       # session consolidation + reflection
+  # Examples of cheap alternatives:
+  # chat: "meta-llama/llama-3.3-70b-instruct"
+  # chat: "deepseek/deepseek-chat-v3-0324"
+
+heartbeat:
+  min_interval_hours: 4              # minimum gap between proactive messages
+  max_interval_hours: 8              # maximum gap
+  quiet_start: "23:00"               # no proactive messages during quiet hours (local time)
+  quiet_end: "08:00"
+  skip_if_user_active_minutes: 60    # skip heartbeat if user messaged within this window
+
+session:
+  timeout_minutes: 30                # silence = session end → triggers memory consolidation
+  context_window_turns: 20           # rolling history kept in prompt
+
+trust:
+  # Controls how fast Hikari warms up to the user
+  # slow=50 meaningful sessions/stage | normal=20 | fast=5 | instant=start at stage 3
+  progression_speed: "fast"          # use "fast" for dev/testing, "normal" for real use
+  starting_stage: 0                  # 0=stranger, 1=acquaintance, 2=regular, 3=trusted
+
+memory:
+  episode_retention_days: 30         # auto-prune old episode files after this many days
+  reflection_hour: 9                 # hour (local time) when daily reflection agent runs
+
+response_delay:
+  enabled: true                      # show typing indicator + realistic delay before sending
+  base_seconds: 1.0                  # minimum pre-send pause
+  ms_per_char: 35                    # ms added per character of response
+  cap_seconds: 10.0                  # max total delay (seconds)
+  pre_indicator_pause: 0.5           # pause before showing typing indicator
+  # mood modifiers: irritable = faster, tired = slower
+  mood_irritable_factor: 0.7         # multiply total delay
+  mood_tired_factor: 1.3             # multiply total delay
+
+character:
+  japanese_words_enabled: true       # light romaji sprinkles: baka, nani, ne, mou, haa
+  mood_enabled: true                 # daily mood state (tired/focused/irritable/good) affects tone
+
+telegram:
+  allowed_user_ids: []               # empty = anyone can chat; add your Telegram user ID to lock
+  # Example: allowed_user_ids: [123456789]

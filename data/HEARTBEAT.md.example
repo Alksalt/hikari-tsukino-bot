@@ -1,0 +1,13 @@
+# Heartbeat State
+# Written and maintained by the bot. Do not hand-edit during active sessions.
+# Copy to HEARTBEAT.md on first run — the bot will maintain it from there.
+
+silence_until: null
+last_proactive_sent: null
+last_user_message: null
+
+# Last 5 excuse templates used (anti-repetition)
+used_excuses: []
+
+# Total proactive messages sent
+proactive_count: 0
