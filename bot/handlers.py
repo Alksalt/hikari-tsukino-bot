@@ -14,7 +14,16 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
-from .chat import consume_false_start, get_daily_mood, respond
+from .chat import (
+    consume_false_start,
+    get_daily_mood,
+    get_ignore_streak,
+    increment_ignore_streak,
+    is_ignore_cooldown,
+    reset_ignore_streak,
+    respond,
+    tick_ignore_cooldown,
+)
 from .consolidate import run_consolidation
 from .llm import chat_completion_vision, get_model, update_model_in_settings
 from .memory import (
@@ -25,6 +34,7 @@ from .memory import (
     get_user_state,
     read_identity,
     read_soul,
+    record_user_message_time,
     set_silence,
     set_trust_stage,
 )
@@ -120,6 +130,49 @@ async def _send_with_delay(update: Update, text: str, mood: str = "") -> None:
 
 async def _send(update: Update, text: str) -> None:
     await update.message.reply_text(text)
+
+
+# ---------------------------------------------------------------------------
+# Ignore mechanic
+# ---------------------------------------------------------------------------
+
+# Probability of ignoring a message by mood × trust stage
+_IGNORE_PROBS: dict[str, dict[int, float]] = {
+    "irritable":    {0: 0.30, 1: 0.20, 2: 0.10, 3: 0.05},
+    "tired":        {0: 0.20, 1: 0.12, 2: 0.05, 3: 0.02},
+    "focused":      {0: 0.10, 1: 0.05, 2: 0.02, 3: 0.00},
+    "weirdly good": {0: 0.05, 1: 0.02, 2: 0.00, 3: 0.00},
+}
+
+# What she sends when ignoring (action lines)
+_IGNORE_ACTIONS = [
+    "[ignores]",
+    "[reads it. says nothing.]",
+    "[doesn't answer]",
+]
+
+# What she sends when finally breaking silence
+_BREAK_ACTIONS = [
+    "...fine. what.",
+    "ugh. what.",
+    "i wasn't ignoring you.",
+    "you're persistent. fine.",
+]
+
+
+def _should_ignore(mood: str, stage: int, settings: dict[str, Any]) -> bool:
+    """Return True if this message should be ignored (no real response)."""
+    ignore_cfg = settings.get("ignore", {})
+    if not ignore_cfg.get("enabled", True):
+        return False
+    if is_ignore_cooldown():
+        return False
+    max_streak = int(ignore_cfg.get("max_streak", 3))
+    if get_ignore_streak() >= max_streak:
+        return False  # streak maxed — must break silence now
+    prob_row = _IGNORE_PROBS.get(mood, _IGNORE_PROBS["focused"])
+    prob = prob_row.get(stage, 0.0)
+    return random.random() < prob
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +380,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     try:
+        settings = _load_settings()
         mood = get_daily_mood()
+        stage = get_trust_stage()
+
+        # Count down post-break cooldown (once per incoming message)
+        tick_ignore_cooldown()
+
+        # Ignore mechanic: sometimes she just doesn't answer
+        if _should_ignore(mood, stage, settings):
+            increment_ignore_streak()
+            record_user_message_time()  # still update heartbeat state
+            action = random.choice(_IGNORE_ACTIONS)
+            await _send_with_delay(update, action, mood=mood)
+            return
+
+        # If a streak was active: break silence with a short line before responding
+        if get_ignore_streak() > 0:
+            break_text = random.choice(_BREAK_ACTIONS)
+            await _send_with_delay(update, break_text, mood=mood)
+            reset_ignore_streak()
+
         reply = await respond(user_text)
         await _send_with_delay(update, reply, mood=mood)
     except Exception as e:

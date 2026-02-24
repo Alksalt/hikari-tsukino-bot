@@ -3,12 +3,13 @@
 
 models:
   # OpenRouter model IDs — swap freely. See MODELS.md for full reference.
-  chat: "openai/gpt-4o-mini"         # main chat responses (cheap + follows instructions)
-  memory: "openai/gpt-4o-mini"       # session consolidation + reflection
-  vision: "openai/gpt-4o-mini"       # image reactions (must support vision)
-  # Examples of cheap alternatives:
+  chat: "deepseek/deepseek-v3.2"   # DeepSeek V3 — testing (was: openai/gpt-4o-mini)
+  memory: "deepseek/deepseek-v3.2" # consolidation + reflection
+  vision: "openai/gpt-4o-mini"             # image reactions (must support vision — keep gpt-4o)
+  # Other cheap alternatives to try:
+  # chat: "openai/gpt-4o-mini"             # original default, reliable
+  # chat: "openai/gpt-5-mini"              # if available on your OpenRouter account
   # chat: "meta-llama/llama-3.3-70b-instruct"
-  # chat: "deepseek/deepseek-chat-v3-0324"
 
 heartbeat:
   min_interval_hours: 4              # minimum gap between proactive messages
@@ -51,6 +52,10 @@ heartbeat_v2:
 character:
   japanese_words_enabled: true       # light romaji sprinkles: baka, nani, ne, mou, haa
   mood_enabled: true                 # daily mood state (tired/focused/irritable/good) affects tone
+
+ignore:
+  enabled: true                      # she sometimes ignores messages (mood + stage gated)
+  max_streak: 3                      # max consecutive ignored messages before she must respond
 
 telegram:
   allowed_user_ids: []               # empty = anyone can chat; add your Telegram user ID to lock

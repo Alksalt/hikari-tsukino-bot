@@ -33,6 +33,10 @@ _session_turn_count: int = 0
 # False start: typing → disappears → reappears (max once per session)
 _false_start_used: bool = False
 
+# Ignore mechanic: consecutive messages she doesn't respond to
+_ignore_streak: int = 0    # how many consecutive messages currently being ignored
+_ignore_cooldown: int = 0  # turns until next ignore is allowed (post-break)
+
 
 def _load_settings() -> dict[str, Any]:
     with open(_SETTINGS_PATH) as f:
@@ -188,10 +192,12 @@ def add_to_history(role: str, content: str) -> None:
 
 
 def clear_history() -> None:
-    global _session_turn_count, _false_start_used
+    global _session_turn_count, _false_start_used, _ignore_streak, _ignore_cooldown
     _history.clear()
     _session_turn_count = 0
     _false_start_used = False
+    _ignore_streak = 0
+    _ignore_cooldown = 0
 
 
 def consume_false_start() -> bool:
@@ -201,6 +207,38 @@ def consume_false_start() -> bool:
         return False
     _false_start_used = True
     return True
+
+
+# ---------------------------------------------------------------------------
+# Ignore mechanic helpers
+# ---------------------------------------------------------------------------
+
+
+def get_ignore_streak() -> int:
+    return _ignore_streak
+
+
+def is_ignore_cooldown() -> bool:
+    return _ignore_cooldown > 0
+
+
+def increment_ignore_streak() -> None:
+    global _ignore_streak
+    _ignore_streak += 1
+
+
+def reset_ignore_streak() -> None:
+    """Break silence: reset streak and impose a cooldown so she can't immediately re-ignore."""
+    global _ignore_streak, _ignore_cooldown
+    _ignore_streak = 0
+    _ignore_cooldown = 3  # can't ignore again for 3 turns
+
+
+def tick_ignore_cooldown() -> None:
+    """Decrement post-break cooldown. Call once per incoming user message."""
+    global _ignore_cooldown
+    if _ignore_cooldown > 0:
+        _ignore_cooldown -= 1
 
 
 def get_session_turn_count() -> int:
