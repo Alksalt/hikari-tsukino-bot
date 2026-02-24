@@ -68,6 +68,46 @@ async def chat_completion(
     return data["choices"][0]["message"]["content"].strip()
 
 
+async def chat_completion_vision(
+    text_prompt: str,
+    image_url: str,
+    task: str = "vision",
+    temperature: float = 0.85,
+) -> str:
+    """Send a vision request (text + image URL) to OpenRouter."""
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY not set in environment")
+
+    model = get_model(task)
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text_prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }
+        ],
+        "temperature": temperature,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/hikari-tsukino-bot",
+        "X-Title": "Hikari Tsukino Bot",
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(OPENROUTER_API_URL, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+    return data["choices"][0]["message"]["content"].strip()
+
+
 def update_model_in_settings(task: str, model_id: str) -> None:
     """Update a model ID in settings.yaml and reload the cache."""
     settings_path = os.path.join(os.path.dirname(__file__), "..", "settings.yaml")

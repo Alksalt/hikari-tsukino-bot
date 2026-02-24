@@ -11,10 +11,12 @@ import yaml
 
 from .llm import chat_completion
 from .memory import (
+    get_facts_with_age,
     get_open_loops,
     get_trust_stage,
     get_user_state,
     read_identity,
+    read_last_episode_carry_over,
     read_memory,
     read_soul,
     read_today_episode,
@@ -27,6 +29,9 @@ _SETTINGS_PATH = _ROOT / "settings.yaml"
 # In-memory conversation history: list of {"role": "user"|"assistant", "content": str}
 _history: list[dict[str, str]] = []
 _session_turn_count: int = 0
+
+# False start: typing → disappears → reappears (max once per session)
+_false_start_used: bool = False
 
 
 def _load_settings() -> dict[str, Any]:
@@ -82,8 +87,8 @@ def _stage_note(stage: int) -> str:
     notes = {
         0: "Trust stage 0 (Stranger): sharp edges, minimal warmth, all tsun, thin excuses.",
         1: (
-            "Trust stage 1 (Acquaintance): teasing is lighter, "
-            "she asks one real question per session."
+            "Trust stage 1 (Acquaintance): still terse. "
+            "cold logistics interrogatives only — not warm follow-up questions."
         ),
         2: (
             "Trust stage 2 (Regular): she remembers things, references past conversations, "
@@ -95,6 +100,13 @@ def _stage_note(stage: int) -> str:
         ),
     }
     return notes.get(stage, notes[0])
+
+
+_CONFIDENCE_PREFIXES = {
+    "high": "you mentioned: {}",
+    "medium": "(uncertain — i think they mentioned: {})",
+    "low": "(faint impression — something about: {})",
+}
 
 
 def build_system_prompt() -> str:
@@ -117,6 +129,18 @@ def build_system_prompt() -> str:
     if _is_mood_enabled():
         parts.append(f"\n## current mood\n{_mood_note(mood)}")
 
+    # Session-opening continuity (M1): carry-over from last session, Stage 2+
+    if stage >= 2 and _session_turn_count == 0:
+        carry_over = read_last_episode_carry_over()
+        if carry_over:
+            parts.append(f"\n## carry-over from last session\n{carry_over}")
+            # ~20% chance: prompt her to open with it explicitly
+            if random.random() < 0.20:
+                parts.append(
+                    "(you may open by briefly referencing how last session felt — "
+                    "in-character, not literally quoting this note)"
+                )
+
     # User context
     user_name = user_state.get("name", "unknown")
     if user_name != "unknown":
@@ -124,14 +148,21 @@ def build_system_prompt() -> str:
 
     if open_loops:
         loops_text = "\n".join(f"- {loop}" for loop in open_loops)
-        parts.append(
-            f"\n## open loops (things to follow up on)\n{loops_text}"
-        )
+        parts.append(f"\n## open loops (things to follow up on)\n{loops_text}")
 
-    known_facts = user_state.get("known_facts", [])
-    if known_facts:
-        facts_text = "\n".join(f"- {fact}" for fact in known_facts)
-        parts.append(f"\n## known facts about the user\n{facts_text}")
+    # Imperfect recall (M3): inject facts with age-based confidence level
+    facts_with_age = get_facts_with_age()
+    if facts_with_age:
+        facts_lines = [
+            "- " + _CONFIDENCE_PREFIXES[f["confidence"]].format(f["text"])
+            for f in facts_with_age
+        ]
+        parts.append(
+            "\n## known facts about the user\n"
+            + "\n".join(facts_lines)
+            + "\n(for uncertain/faint items: use hedged language — "
+            "'i think you mentioned...?' not 'you said...')"
+        )
 
     # Today's episode summary
     if today_episode:
@@ -157,9 +188,19 @@ def add_to_history(role: str, content: str) -> None:
 
 
 def clear_history() -> None:
-    global _session_turn_count
+    global _session_turn_count, _false_start_used
     _history.clear()
     _session_turn_count = 0
+    _false_start_used = False
+
+
+def consume_false_start() -> bool:
+    """Return True and mark used if false start hasn't fired this session."""
+    global _false_start_used
+    if _false_start_used:
+        return False
+    _false_start_used = True
+    return True
 
 
 def get_session_turn_count() -> int:

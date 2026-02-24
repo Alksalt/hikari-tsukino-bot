@@ -195,7 +195,7 @@ def clear_open_loops() -> None:
 
 
 def add_known_fact(fact: str) -> None:
-    """Append a known fact to USER.md."""
+    """Append a known fact to USER.md, prefixed with today's date for age tracking."""
     content = read_file(USER_MD)
     if not content:
         return
@@ -204,16 +204,56 @@ def add_known_fact(fact: str) -> None:
     if not facts_match:
         return
 
+    dated_fact = f"[{date.today().isoformat()}] {fact}"
     existing = facts_match.group(2).strip()
     if existing.lower() in ("none yet", "none"):
-        new_facts = f"- {fact}"
+        new_facts = f"- {dated_fact}"
     else:
-        new_facts = existing + f"\n- {fact}"
+        new_facts = existing + f"\n- {dated_fact}"
 
     new_content = (
         content[: facts_match.start(2)] + new_facts + content[facts_match.end(2) :]
     )
     USER_MD.write_text(new_content, encoding="utf-8")
+
+
+def get_facts_with_age() -> list[dict[str, Any]]:
+    """Return known facts with age metadata for imperfect recall injection.
+
+    Returns list of dicts: {text, age_days, confidence}
+    confidence: "high" (<7d), "medium" (7-30d), "low" (30+d or undated)
+    Backward-compatible: undated facts are treated as low confidence.
+    """
+    raw_facts = get_user_state().get("known_facts", [])
+    today = date.today()
+    result = []
+
+    date_pattern = re.compile(r"^\[(\d{4}-\d{2}-\d{2})\]\s+(.*)")
+
+    for fact in raw_facts:
+        m = date_pattern.match(fact)
+        if m:
+            try:
+                fact_date = date.fromisoformat(m.group(1))
+                age_days = (today - fact_date).days
+                text = m.group(2).strip()
+            except ValueError:
+                age_days = 999
+                text = fact
+        else:
+            age_days = 999  # undated = treat as old
+            text = fact
+
+        if age_days < 7:
+            confidence = "high"
+        elif age_days < 30:
+            confidence = "medium"
+        else:
+            confidence = "low"
+
+        result.append({"text": text, "age_days": age_days, "confidence": confidence})
+
+    return result
 
 
 def forget_topic(topic: str) -> None:
@@ -302,6 +342,10 @@ def get_heartbeat_state() -> dict[str, Any]:
         "last_user_message": state.get("last_user_message"),
         "used_excuses": state.get("used_excuses", []),
         "proactive_count": state.get("proactive_count", 0),
+        # Re-engagement fields
+        "bot_had_last_word": bool(state.get("bot_had_last_word", False)),
+        "last_session_ended_at": state.get("last_session_ended_at"),
+        "reengagement_sent_at": state.get("reengagement_sent_at"),
     }
 
 
@@ -317,6 +361,20 @@ def set_silence(until: datetime | None) -> None:
 
 def record_user_message_time() -> None:
     update_heartbeat_state(last_user_message=datetime.now(UTC).isoformat())
+
+
+def set_session_ended(bot_had_last_word: bool) -> None:
+    """Record that a session just ended and whether bot's message was last."""
+    update_heartbeat_state(
+        bot_had_last_word=bot_had_last_word,
+        last_session_ended_at=datetime.now(UTC).isoformat(),
+        reengagement_sent_at=None,  # reset for this new session gap
+    )
+
+
+def set_reengagement_sent() -> None:
+    """Mark that a re-engagement nudge was sent for the current dead session."""
+    update_heartbeat_state(reengagement_sent_at=datetime.now(UTC).isoformat())
 
 
 def record_proactive_sent(excuse_index: int) -> None:
@@ -366,6 +424,17 @@ def read_recent_episodes(n: int = 3) -> str:
         if content:
             parts.append(content)
     return "\n\n---\n\n".join(parts)
+
+
+def read_last_episode_carry_over() -> str:
+    """Return the carry_over line from the most recent episode file, or empty string."""
+    episodes = sorted(EPISODES_DIR.glob("????-??-??.md"), reverse=True)
+    for path in episodes:
+        content = read_file(path)
+        m = re.search(r"## carry_over\n(.+?)(?:\n##|\Z)", content, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+    return ""
 
 
 def prune_old_episodes(retention_days: int) -> int:

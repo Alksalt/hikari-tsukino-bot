@@ -17,6 +17,7 @@ from .memory import (
     get_meaningful_exchanges,
     get_trust_stage,
     increment_meaningful_exchanges,
+    set_session_ended,
     set_trust_stage,
     update_last_updated,
     write_episode,
@@ -43,6 +44,17 @@ is_meaningful: true  # true if >3 substantive turns, false if just commands/shor
 
 If a list has no items, use an empty list: []"""
 
+_CARRY_OVER_SYSTEM = """\
+Write exactly 1 short line describing this conversation's emotional tone from Hikari's \
+perspective, 3rd person, past tense.
+Format: '[quality]. she's [state].'
+Examples:
+  good session. she's slightly warmer.
+  user was distant. she's more guarded.
+  user opened up a bit. she noticed.
+  rough session. she's more careful now.
+Output ONLY the line itself. No quotes, no explanation."""
+
 
 def _load_settings() -> dict[str, Any]:
     with open(_SETTINGS_PATH) as f:
@@ -65,6 +77,15 @@ def _build_consolidation_prompt(history: list[dict[str, str]]) -> list[dict[str,
     ]
 
 
+def _build_carry_over_prompt(
+    conversation_text: str,
+) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": _CARRY_OVER_SYSTEM},
+        {"role": "user", "content": conversation_text},
+    ]
+
+
 async def run_consolidation() -> bool:
     """
     Run memory consolidation for the current session.
@@ -72,6 +93,9 @@ async def run_consolidation() -> bool:
     """
     history = get_history()
     turn_count = get_session_turn_count()
+
+    # Detect if bot had the last word (for re-engagement nudge)
+    bot_last = bool(history and history[-1]["role"] == "assistant")
 
     if turn_count < 2:
         clear_history()
@@ -101,6 +125,19 @@ async def run_consolidation() -> bool:
     settings = _load_settings()
     stage = get_trust_stage()
 
+    # Generate carry-over note for session-opening continuity (M1)
+    carry_over = ""
+    if summary and is_meaningful:
+        try:
+            conversation_text = "\n".join(
+                f"{msg['role'].upper()}: {msg['content']}" for msg in history
+            )
+            carry_msgs = _build_carry_over_prompt(conversation_text)
+            carry_over = await chat_completion(carry_msgs, task="memory", temperature=0.4)
+            carry_over = carry_over.strip().strip('"').strip("'")
+        except Exception:
+            carry_over = ""
+
     if summary:
         exchanges = get_meaningful_exchanges()
         facts_text = "".join(f"- {f}\n" for f in new_facts) or "none\n"
@@ -113,6 +150,8 @@ async def run_consolidation() -> bool:
             f"\n## emotional notes\n{emotional_notes or 'none'}\n\n"
             f"## trust: {stage} | meaningful_exchanges: {exchanges}\n"
         )
+        if carry_over:
+            episode_content += f"\n## carry_over\n{carry_over}\n"
         write_episode(episode_content)
 
     for fact in new_facts:
@@ -135,6 +174,9 @@ async def run_consolidation() -> bool:
             if count - stage_start_count >= threshold:
                 new_stage = min(stage + 1, 3)
                 set_trust_stage(new_stage)
+
+    # Record session-end state for re-engagement nudge (S1)
+    set_session_ended(bot_had_last_word=bot_last)
 
     update_last_updated()
     clear_history()

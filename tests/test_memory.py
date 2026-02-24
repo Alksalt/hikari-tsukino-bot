@@ -79,7 +79,8 @@ def test_add_known_fact():
     from bot.memory import add_known_fact, get_user_state
     add_known_fact("likes coffee")
     state = get_user_state()
-    assert "likes coffee" in state["known_facts"]
+    # Facts are now stored with a date prefix: "[YYYY-MM-DD] likes coffee"
+    assert any("likes coffee" in f for f in state["known_facts"])
 
 
 def test_add_multiple_facts():
@@ -87,8 +88,8 @@ def test_add_multiple_facts():
     add_known_fact("works in tech")
     add_known_fact("has a cat")
     state = get_user_state()
-    assert "works in tech" in state["known_facts"]
-    assert "has a cat" in state["known_facts"]
+    assert any("works in tech" in f for f in state["known_facts"])
+    assert any("has a cat" in f for f in state["known_facts"])
 
 
 def test_add_open_loop():

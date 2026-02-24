@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,15 +14,17 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
-from .chat import get_daily_mood, respond
+from .chat import consume_false_start, get_daily_mood, respond
 from .consolidate import run_consolidation
-from .llm import get_model, update_model_in_settings
+from .llm import chat_completion_vision, get_model, update_model_in_settings
 from .memory import (
     forget_topic,
     get_heartbeat_state,
     get_meaningful_exchanges,
     get_trust_stage,
     get_user_state,
+    read_identity,
+    read_soul,
     set_silence,
     set_trust_stage,
 )
@@ -86,11 +89,31 @@ async def _send_with_delay(update: Update, text: str, mood: str = "") -> None:
     if pre_pause > 0:
         await asyncio.sleep(pre_pause)
 
-    # Show typing indicator for the remaining delay
-    typing_duration = max(0.0, total_delay - pre_pause)
-    if typing_duration > 0:
+    # False start: typing → disappears → reappears (~10%, long msgs, Stage 2+, once/session)
+    false_start_cfg = delay_cfg.get("false_start_enabled", True)
+    stage = get_trust_stage()
+    if (
+        false_start_cfg
+        and len(text) > 80
+        and stage >= 2
+        and random.random() < 0.10
+        and consume_false_start()
+    ):
         await update.message.chat.send_action(ChatAction.TYPING)
-        await asyncio.sleep(typing_duration)
+        await asyncio.sleep(2.5)
+        # Let indicator expire naturally (~5s Telegram timeout), pause before restart
+        await asyncio.sleep(1.5)
+        # Remaining typing duration (subtract false start time already spent)
+        remaining = max(0.0, total_delay - pre_pause - 4.0)
+        if remaining > 0:
+            await update.message.chat.send_action(ChatAction.TYPING)
+            await asyncio.sleep(remaining)
+    else:
+        # Normal path: show typing for calculated duration
+        typing_duration = max(0.0, total_delay - pre_pause)
+        if typing_duration > 0:
+            await update.message.chat.send_action(ChatAction.TYPING)
+            await asyncio.sleep(typing_duration)
 
     await update.message.reply_text(text)
 
@@ -310,6 +333,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.error("Chat response failed: %s", e)
         # Silent failure — Hikari goes quiet rather than sending an error
+
+
+# ---------------------------------------------------------------------------
+# Photo handler
+# ---------------------------------------------------------------------------
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle incoming photos — Hikari reacts in-character via vision model."""
+    if not update.message or not update.message.photo:
+        return
+    if not _is_allowed(update.effective_user.id):
+        return
+
+    try:
+        # Highest-resolution version
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        image_url = file.file_path  # Telegram CDN URL
+
+        # Build prompt: system context + optional caption
+        identity = read_identity()
+        soul = read_soul()
+        caption = update.message.caption or ""
+        caption_note = f' The user added a caption: "{caption}".' if caption else ""
+
+        prompt = (
+            f"{identity}\n\n{soul}\n\n"
+            "You just received an image from the user."
+            f"{caption_note} "
+            "React in-character as Hikari. You have opinions. "
+            "1-3 sentences max. No markdown. Not impressed by default."
+        )
+
+        mood = get_daily_mood()
+        reply = await chat_completion_vision(prompt, image_url, task="vision")
+        await _send_with_delay(update, reply, mood=mood)
+    except Exception as e:
+        logger.error("Photo handler failed: %s", e)
 
 
 # ---------------------------------------------------------------------------

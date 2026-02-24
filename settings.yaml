@@ -5,6 +5,7 @@ models:
   # OpenRouter model IDs — swap freely. See MODELS.md for full reference.
   chat: "openai/gpt-4o-mini"         # main chat responses (cheap + follows instructions)
   memory: "openai/gpt-4o-mini"       # session consolidation + reflection
+  vision: "openai/gpt-4o-mini"       # image reactions (must support vision)
   # Examples of cheap alternatives:
   # chat: "meta-llama/llama-3.3-70b-instruct"
   # chat: "deepseek/deepseek-chat-v3-0324"
@@ -39,6 +40,13 @@ response_delay:
   # mood modifiers: irritable = faster, tired = slower
   mood_irritable_factor: 0.7         # multiply total delay
   mood_tired_factor: 1.3             # multiply total delay
+  false_start_enabled: true          # typing → disappears → reappears (~10% on long msgs, Stage 2+)
+
+heartbeat_v2:
+  reengagement_min_hours: 2          # min hours after session ends before re-engagement nudge
+  reengagement_max_hours: 6          # max hours (after this she's moved on)
+  followup_loop_after_hours: 24      # open loop older than this gets priority in context-aware heartbeat
+  context_aware_stage_threshold: 2   # stage at which heartbeat switches to LLM-generated messages
 
 character:
   japanese_words_enabled: true       # light romaji sprinkles: baka, nani, ne, mou, haa

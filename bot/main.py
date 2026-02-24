@@ -26,6 +26,7 @@ from .handlers import (
     cmd_stats,
     cmd_unsilence,
     handle_message,
+    handle_photo,
     session_timeout_callback,
 )
 from .heartbeat import run_heartbeat
@@ -86,6 +87,7 @@ def build_application() -> Application:
 
     # Messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     return app
 
