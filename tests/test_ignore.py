@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import bot.chat as chat_module
-import pytest
 from bot.chat import (
     clear_history,
     get_ignore_streak,

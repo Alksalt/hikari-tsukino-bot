@@ -22,6 +22,8 @@ data/USER.md
 data/MEMORY.md
 data/THOUGHTS.md
 data/HEARTBEAT.md
+data/SELF.md
+data/MOOD.md
 data/episodes/*.md
 !data/episodes/.gitkeep
 

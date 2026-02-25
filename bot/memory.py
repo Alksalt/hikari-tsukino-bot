@@ -19,6 +19,8 @@ USER_MD = DATA_DIR / "USER.md"
 MEMORY_MD = DATA_DIR / "MEMORY.md"
 THOUGHTS_MD = DATA_DIR / "THOUGHTS.md"
 HEARTBEAT_MD = DATA_DIR / "HEARTBEAT.md"
+SELF_MD = DATA_DIR / "SELF.md"
+MOOD_MD = DATA_DIR / "MOOD.md"
 
 IDENTITY_MD = CHARACTER_DIR / "IDENTITY.md"
 SOUL_MD = CHARACTER_DIR / "SOUL.md"
@@ -346,6 +348,11 @@ def get_heartbeat_state() -> dict[str, Any]:
         "bot_had_last_word": bool(state.get("bot_had_last_word", False)),
         "last_session_ended_at": state.get("last_session_ended_at"),
         "reengagement_sent_at": state.get("reengagement_sent_at"),
+        # Escalation floor modifier (-1, 0, +1, +2)
+        "warmth_floor_modifier": int(state.get("warmth_floor_modifier", 0)),
+        # Photo daily counter
+        "photos_sent_today": int(state.get("photos_sent_today", 0)),
+        "photos_sent_date": state.get("photos_sent_date"),
     }
 
 
@@ -489,3 +496,221 @@ def append_thought(thought: str) -> None:
     today = date.today().isoformat()
     entry = f"\n## {today}\n{thought}\n"
     THOUGHTS_MD.write_text((content or "") + entry, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# SELF.md — Hikari's inner life (preoccupation, staged disclosures, competitive memory)
+# ---------------------------------------------------------------------------
+
+
+def read_self_md() -> str:
+    """Return the full content of SELF.md, or empty string if not found."""
+    return read_file(SELF_MD)
+
+
+def write_self_preoccupation(thought: str) -> None:
+    """Update the ## preoccupation section in SELF.md."""
+    content = read_file(SELF_MD)
+    if not content:
+        SELF_MD.write_text(
+            f"# Hikari's Self-Model\n\n## preoccupation\n{thought}\n\n"
+            "## staged disclosures\nnone yet.\n\n"
+            "## things she told the user\nnone yet.\n\n"
+            "## established joke\nnone yet.\n",
+            encoding="utf-8",
+        )
+        return
+
+    new_content = re.sub(
+        r"(## preoccupation\n)(.*?)(?=\n##|\Z)",
+        rf"\g<1>{thought}\n",
+        content,
+        flags=re.DOTALL,
+    )
+    SELF_MD.write_text(new_content, encoding="utf-8")
+
+
+def get_self_preoccupation() -> str:
+    """Return current preoccupation line, or empty string."""
+    content = read_file(SELF_MD)
+    if not content:
+        return ""
+    m = re.search(r"## preoccupation\n(.+?)(?=\n##|\Z)", content, re.DOTALL)
+    if m:
+        text = m.group(1).strip()
+        return "" if text.lower() in ("none yet.", "none yet", "none") else text
+    return ""
+
+
+def get_staged_disclosure(stage: int) -> str | None:
+    """Return first unused staged disclosure at or below current trust stage, or None."""
+    content = read_file(SELF_MD)
+    if not content:
+        return None
+    m = re.search(r"## staged disclosures\n(.*?)(?=\n##|\Z)", content, re.DOTALL)
+    if not m:
+        return None
+    for line in m.group(1).splitlines():
+        line = line.strip().lstrip("- ")
+        # Format: [stage N] used: false | disclosure text
+        dm = re.match(r"\[stage (\d+)\] used: (true|false) \| (.+)", line, re.IGNORECASE)
+        if dm and int(dm.group(1)) <= stage and dm.group(2).lower() == "false":
+            return dm.group(3).strip()
+    return None
+
+
+def mark_disclosure_used(disclosure_text: str) -> None:
+    """Mark a staged disclosure as used by text match."""
+    content = read_file(SELF_MD)
+    if not content:
+        return
+    new_content = re.sub(
+        rf"(\[stage \d+\] used: )false( \| {re.escape(disclosure_text)})",
+        r"\1true\2",
+        content,
+        flags=re.IGNORECASE,
+    )
+    SELF_MD.write_text(new_content, encoding="utf-8")
+
+
+def add_self_disclosure(text: str) -> None:
+    """Add something Hikari told the user to the competitive memory list."""
+    content = read_file(SELF_MD)
+    if not content:
+        return
+    dated_entry = f"[{date.today().isoformat()}] {text}"
+    m = re.search(r"(## things she told the user\n)(.*?)(?=\n##|\Z)", content, re.DOTALL)
+    if not m:
+        return
+    existing = m.group(2).strip()
+    if existing.lower() in ("none yet.", "none yet", "none"):
+        new_body = f"- {dated_entry}\n"
+    else:
+        new_body = existing + f"\n- {dated_entry}\n"
+    new_content = content[: m.start(2)] + new_body + content[m.end(2) :]
+    SELF_MD.write_text(new_content, encoding="utf-8")
+
+
+def get_self_disclosures() -> list[dict[str, str]]:
+    """Return list of things Hikari told the user: [{date, text}]."""
+    content = read_file(SELF_MD)
+    if not content:
+        return []
+    m = re.search(r"## things she told the user\n(.*?)(?=\n##|\Z)", content, re.DOTALL)
+    if not m:
+        return []
+    results = []
+    for line in m.group(1).splitlines():
+        line = line.strip().lstrip("- ")
+        dm = re.match(r"\[(\d{4}-\d{2}-\d{2})\] (.+)", line)
+        if dm:
+            results.append({"date": dm.group(1), "text": dm.group(2).strip()})
+    return results
+
+
+# ---------------------------------------------------------------------------
+# MOOD.md — emotional arc tracking
+# ---------------------------------------------------------------------------
+
+_MOOD_MD_TEMPLATE = """\
+# Hikari's Emotional Arc
+# Written by consolidate.py + reflect.py. Read by chat.py.
+
+current_arc: stable
+arc_detected_at: {today}
+arc_note: |
+  not enough sessions to detect a trend yet.
+recent_session_temperatures: []
+"""
+
+
+def _ensure_mood_md() -> None:
+    if not MOOD_MD.exists():
+        MOOD_MD.write_text(
+            _MOOD_MD_TEMPLATE.format(today=date.today().isoformat()), encoding="utf-8"
+        )
+
+
+def read_mood_arc() -> dict[str, Any]:
+    """Return parsed MOOD.md state."""
+    _ensure_mood_md()
+    content = read_file(MOOD_MD)
+    try:
+        # Strip comment lines then parse YAML
+        lines = [ln for ln in content.splitlines() if not ln.strip().startswith("#")]
+        data = yaml.safe_load("\n".join(lines)) or {}
+    except yaml.YAMLError:
+        data = {}
+    return {
+        "current_arc": data.get("current_arc", "stable"),
+        "arc_note": str(data.get("arc_note", "")).strip(),
+        "recent_session_temperatures": data.get("recent_session_temperatures", []),
+    }
+
+
+def append_session_temperature(session_date: date, temperature: str) -> None:
+    """Append a session temperature to MOOD.md, keeping last 5."""
+    _ensure_mood_md()
+    arc_data = read_mood_arc()
+    temps: list[str] = list(arc_data["recent_session_temperatures"])
+    temps.append(f"[{session_date.isoformat()}] {temperature}")
+    temps = temps[-5:]  # keep last 5
+
+    content = read_file(MOOD_MD)
+    # Rebuild the file with updated temperatures
+    comment_lines = [ln for ln in content.splitlines() if ln.strip().startswith("#")]
+    data_lines = [ln for ln in content.splitlines() if not ln.strip().startswith("#")]
+    try:
+        data = yaml.safe_load("\n".join(data_lines)) or {}
+    except yaml.YAMLError:
+        data = {}
+    data["recent_session_temperatures"] = temps
+    yaml_block = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    MOOD_MD.write_text(
+        "\n".join(comment_lines) + "\n" + yaml_block, encoding="utf-8"
+    )
+
+
+def write_mood_arc(arc: str, arc_note: str) -> None:
+    """Update current_arc and arc_note in MOOD.md."""
+    _ensure_mood_md()
+    content = read_file(MOOD_MD)
+    comment_lines = [ln for ln in content.splitlines() if ln.strip().startswith("#")]
+    data_lines = [ln for ln in content.splitlines() if not ln.strip().startswith("#")]
+    try:
+        data = yaml.safe_load("\n".join(data_lines)) or {}
+    except yaml.YAMLError:
+        data = {}
+    data["current_arc"] = arc
+    data["arc_detected_at"] = date.today().isoformat()
+    data["arc_note"] = arc_note
+    yaml_block = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    MOOD_MD.write_text(
+        "\n".join(comment_lines) + "\n" + yaml_block, encoding="utf-8"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Photo daily counter
+# ---------------------------------------------------------------------------
+
+
+def record_photo_sent() -> None:
+    """Increment the daily photo counter in HEARTBEAT.md."""
+    state = _read_heartbeat_yaml()
+    today_str = date.today().isoformat()
+    # Reset if it's a new day
+    if state.get("photos_sent_date") != today_str:
+        state["photos_sent_today"] = 0
+        state["photos_sent_date"] = today_str
+    state["photos_sent_today"] = int(state.get("photos_sent_today", 0)) + 1
+    _write_heartbeat_yaml(state)
+
+
+def get_photos_sent_today() -> int:
+    """Return number of photos sent today."""
+    state = _read_heartbeat_yaml()
+    today_str = date.today().isoformat()
+    if state.get("photos_sent_date") != today_str:
+        return 0
+    return int(state.get("photos_sent_today", 0))

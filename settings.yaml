@@ -60,3 +60,10 @@ ignore:
 telegram:
   allowed_user_ids: []               # empty = anyone can chat; add your Telegram user ID to lock
   # Example: allowed_user_ids: [123456789]
+
+photo:
+  enabled: false                     # set true to enable VisualSelf photo output
+  model: "black-forest-labs/flux.2-klein"  # ~$0.015/image via OpenRouter
+  stage_threshold: 2                 # minimum trust stage to send photos
+  heartbeat_probability: 0.15        # chance of proactive photo in context-aware heartbeat (Stage 3)
+  max_per_day: 2                     # she's not a content machine

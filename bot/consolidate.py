@@ -13,12 +13,16 @@ from .llm import chat_completion
 from .memory import (
     add_known_fact,
     add_open_loop,
+    add_self_disclosure,
+    append_session_temperature,
     clear_open_loops,
+    get_heartbeat_state,
     get_meaningful_exchanges,
     get_trust_stage,
     increment_meaningful_exchanges,
     set_session_ended,
     set_trust_stage,
+    update_heartbeat_state,
     update_last_updated,
     write_episode,
 )
@@ -40,6 +44,10 @@ open_loops:
   - [time-sensitive item the user mentioned, e.g. "has an interview on Friday"]
 emotional_notes: |
   [brief: how was the user? how was the session overall?]
+session_temperature: neutral  # one of: warm / neutral / cold / hostile
+warmth_delta: 0  # -1 (cold/bad session), 0 (neutral), +1 (warm/good session)
+self_disclosures:
+  - [something notable Hikari herself shared or revealed in this session, not facts about the user]
 is_meaningful: true  # true if >3 substantive turns, false if just commands/short
 
 If a list has no items, use an empty list: []"""
@@ -120,7 +128,16 @@ async def run_consolidation() -> bool:
     new_facts: list[str] = data.get("new_facts", []) or []
     open_loops: list[str] = data.get("open_loops", []) or []
     emotional_notes = data.get("emotional_notes", "").strip()
+    session_temperature: str = str(data.get("session_temperature", "neutral")).strip().lower()
+    warmth_delta: int = int(data.get("warmth_delta", 0))
+    self_disclosures: list[str] = data.get("self_disclosures", []) or []
     is_meaningful: bool = data.get("is_meaningful", False)
+
+    # Clamp warmth_delta to valid range
+    warmth_delta = max(-1, min(1, warmth_delta))
+    # Validate temperature
+    if session_temperature not in ("warm", "neutral", "cold", "hostile"):
+        session_temperature = "neutral"
 
     settings = _load_settings()
     stage = get_trust_stage()
@@ -164,6 +181,11 @@ async def run_consolidation() -> bool:
             if loop and loop.strip():
                 add_open_loop(loop.strip())
 
+    # Record things Hikari told the user (competitive memory)
+    for disclosure in self_disclosures:
+        if disclosure and disclosure.strip():
+            add_self_disclosure(disclosure.strip())
+
     if is_meaningful:
         count = increment_meaningful_exchanges()
         speed = settings.get("trust", {}).get("progression_speed", "normal")
@@ -174,6 +196,31 @@ async def run_consolidation() -> bool:
             if count - stage_start_count >= threshold:
                 new_stage = min(stage + 1, 3)
                 set_trust_stage(new_stage)
+
+        # Append session temperature to MOOD.md
+        try:
+            append_session_temperature(date.today(), session_temperature)
+        except Exception:
+            pass
+
+        # Update warmth floor modifier in HEARTBEAT.md (escalation floors)
+        try:
+            hb_state = get_heartbeat_state()
+            current_floor = hb_state.get("warmth_floor_modifier", 0)
+            if warmth_delta == 0:
+                # Decay toward 0
+                if current_floor > 0:
+                    new_floor = current_floor - 1
+                elif current_floor < 0:
+                    new_floor = current_floor + 1
+                else:
+                    new_floor = 0
+            else:
+                new_floor = current_floor + warmth_delta
+            new_floor = max(-1, min(2, new_floor))
+            update_heartbeat_state(warmth_floor_modifier=new_floor)
+        except Exception:
+            pass
 
     # Record session-end state for re-engagement nudge (S1)
     set_session_ended(bot_had_last_word=bot_last)

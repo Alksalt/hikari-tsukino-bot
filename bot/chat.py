@@ -12,12 +12,18 @@ import yaml
 from .llm import chat_completion
 from .memory import (
     get_facts_with_age,
+    get_heartbeat_state,
     get_open_loops,
+    get_self_disclosures,
+    get_self_preoccupation,
+    get_staged_disclosure,
     get_trust_stage,
     get_user_state,
+    mark_disclosure_used,
     read_identity,
     read_last_episode_carry_over,
     read_memory,
+    read_mood_arc,
     read_soul,
     read_today_episode,
     record_user_message_time,
@@ -177,6 +183,101 @@ def build_system_prompt() -> str:
         # Trim to avoid excessive context
         memory_lines = memory.splitlines()[:30]
         parts.append("\n## long-term memory\n" + "\n".join(memory_lines))
+
+    # --- v0.3 additions ---
+
+    # Warmth floor modifier: escalation floors (Phase 3)
+    try:
+        hb = get_heartbeat_state()
+        floor_mod = hb.get("warmth_floor_modifier", 0)
+        if floor_mod >= 2:
+            parts.append(
+                "\n## relationship temperature\n"
+                "something warm happened recently. her guard is slightly lower than usual. "
+                "she won't announce it."
+            )
+        elif floor_mod == 1:
+            parts.append(
+                "\n## relationship temperature\n"
+                "last session was decent. she's not starting cold."
+            )
+        elif floor_mod <= -1:
+            parts.append(
+                "\n## relationship temperature\n"
+                "last session was rough. she's more careful. her walls are slightly higher."
+            )
+    except Exception:
+        pass
+
+    # SELF.md injection: preoccupation + staged disclosure (Phase 2, Stage 2+)
+    if stage >= 2:
+        try:
+            preoccupation = get_self_preoccupation()
+            if preoccupation:
+                parts.append(
+                    f"\n## her current preoccupation (unrelated to this conversation)\n"
+                    f"{preoccupation}\n"
+                    "(5–10% of session openers: she surfaces this as an intrusive thought "
+                    "then drops it. 'i keep thinking about — anyway.')"
+                )
+
+            # Staged disclosure: surface one unused fact if context is right
+            disclosure = get_staged_disclosure(stage)
+            if disclosure and random.random() < 0.15:
+                parts.append(
+                    f"\n## staged disclosure (she hasn't mentioned this yet)\n"
+                    f"{disclosure}\n"
+                    "(she might surface this if the conversation context is naturally right. "
+                    "only once — call mark_disclosure_used() is handled by the system)"
+                )
+                # Mark as used so it doesn't repeat
+                mark_disclosure_used(disclosure)
+        except Exception:
+            pass
+
+    # Competitive memory: she checks if user remembers something about her (Phase 4, Stage 2+)
+    if stage >= 2:
+        try:
+            disclosures = get_self_disclosures()
+            if disclosures and random.random() < 0.10:
+                item = disclosures[0]  # oldest unchecked
+                parts.append(
+                    f"\n## competitive memory check\n"
+                    f"she mentioned '{item['text']}' on {item['date']}. "
+                    "she hasn't heard the user reference it since. she might check if they"
+                    " remember — "
+                    "in-character, indirect. if they don't remember: small legible reaction, "
+                    "not devastating. 'i'm not surprised. forget it.'"
+                )
+        except Exception:
+            pass
+
+    # Mood arc injection: emotional trajectory (Phase 5, Stage 2+)
+    if stage >= 2:
+        try:
+            arc_data = read_mood_arc()
+            arc = arc_data.get("current_arc", "stable")
+            arc_note = arc_data.get("arc_note", "")
+            if arc == "brightening" and arc_note:
+                parts.append(
+                    "\n## emotional arc\n"
+                    "things have been going well lately. she's not going to say that, "
+                    "but she's slightly more open than her baseline."
+                )
+            elif arc == "darkening" and arc_note:
+                parts.append(
+                    "\n## emotional arc\n"
+                    "the past few sessions have been off. she's quieter, more careful. "
+                    "she won't explain it."
+                )
+            elif arc == "guarded" and arc_note:
+                parts.append(
+                    "\n## emotional arc\n"
+                    "she's been pulling back. not hostile, but less available."
+                )
+            # stable = no injection
+        except Exception:
+            pass
 
     return "\n".join(parts)
 

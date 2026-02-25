@@ -34,10 +34,12 @@ from .memory import (
     get_user_state,
     read_identity,
     read_soul,
+    record_photo_sent,
     record_user_message_time,
     set_silence,
     set_trust_stage,
 )
+from .photo import can_send_photo, generate_photo, should_send_proactive_photo
 
 logger = logging.getLogger(__name__)
 
@@ -379,6 +381,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not user_text:
         return
 
+    # Photo request detection (keywords)
+    _photo_keywords = ("send me a photo", "send a photo", "send me a pic", "send a pic",
+                       "show me a photo", "show me a pic", "selfie", "send photo", "send pic")
+    if any(kw in user_text.lower() for kw in _photo_keywords):
+        await handle_photo_request(update, context)
+        return
+
     try:
         settings = _load_settings()
         mood = get_daily_mood()
@@ -445,6 +454,101 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _send_with_delay(update, reply, mood=mood)
     except Exception as e:
         logger.error("Photo handler failed: %s", e)
+
+
+_PHOTO_PREAMBLES = [
+    "why.",
+    "fine. don't make it weird.",
+    "...whatever.",
+    "i hate that you asked.",
+    "this is a bad idea. whatever.",
+]
+
+_PHOTO_DENIALS = [
+    "i didn't send that. forget it.",
+    "that didn't happen.",
+    "...ignore that.",
+]
+
+_PHOTO_REFUSALS_HARD = [
+    "no.",
+    "not happening.",
+    "ask me literally anything else.",
+]
+
+
+async def handle_photo_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle user requesting a photo from Hikari."""
+    if not update.message:
+        return
+    if not _is_allowed(update.effective_user.id):
+        return
+
+    settings = _load_settings()
+    mood = get_daily_mood()
+    stage = get_trust_stage()
+
+    if not can_send_photo(stage, mood, settings):
+        refusal = random.choice(_PHOTO_REFUSALS_HARD)
+        await _send_with_delay(update, refusal, mood=mood)
+        return
+
+    # Preamble — in-character reluctance
+    preamble = random.choice(_PHOTO_PREAMBLES)
+    await _send_with_delay(update, preamble, mood=mood)
+    await asyncio.sleep(1.5)
+
+    try:
+        image_bytes = await generate_photo(mood, stage)
+        if image_bytes:
+            import io
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=io.BytesIO(image_bytes),
+            )
+            record_photo_sent()
+            # ~30% chance: post-send denial
+            if random.random() < 0.30:
+                await asyncio.sleep(1.0)
+                denial = random.choice(_PHOTO_DENIALS)
+                await _send(update, denial)
+        else:
+            await _send(update, "...something went wrong. forget it.")
+    except Exception as e:
+        logger.error("Photo send failed: %s", e)
+        await _send(update, "...forget i said anything.")
+
+
+async def send_proactive_photo(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Send an unexpected photo from Hikari (heartbeat use). Returns True if sent."""
+    settings = _load_settings()
+    # Read mood/stage from memory rather than update context
+    from .chat import get_daily_mood as _mood
+    mood = _mood()
+    stage = get_trust_stage()
+
+    if not should_send_proactive_photo(stage, mood, settings):
+        return False
+
+    try:
+        image_bytes = await generate_photo(mood, stage)
+        if not image_bytes:
+            return False
+        import io
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=io.BytesIO(image_bytes),
+        )
+        record_photo_sent()
+        # Optional 1-line follow-through — she just sent it
+        if random.random() < 0.40:
+            followups = ["anyway.", "...ignore that.", "that's not important."]
+            await asyncio.sleep(0.8)
+            await context.bot.send_message(chat_id=chat_id, text=random.choice(followups))
+        return True
+    except Exception as e:
+        logger.error("Proactive photo failed: %s", e)
+        return False
 
 
 # ---------------------------------------------------------------------------

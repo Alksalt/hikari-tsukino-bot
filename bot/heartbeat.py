@@ -247,11 +247,12 @@ At stage 0-1: stay sharp and minimal. At stage 2-3: slightly warmer but still ts
     return await chat_completion(messages, task="chat", temperature=0.9)
 
 
-async def run_heartbeat(send_fn: Any) -> bool:
+async def run_heartbeat(send_fn: Any, photo_fn: Any | None = None) -> bool:
     """
     Check conditions and send a proactive message if appropriate.
     Checks re-engagement nudge first, then regular heartbeat.
     send_fn: async callable(text: str) that sends the message via Telegram.
+    photo_fn: optional async callable() that sends a proactive photo; returns bool.
     Returns True if a message was sent.
     """
     settings = _load_settings()
@@ -287,6 +288,14 @@ async def run_heartbeat(send_fn: Any) -> bool:
                 )
                 await send_fn(message)
                 record_proactive_sent(-1)  # -1 = LLM-generated (no template index)
+
+                # VisualSelf: maybe send a proactive photo after the heartbeat message (Stage 3+)
+                if photo_fn is not None and stage >= 3:
+                    try:
+                        await photo_fn()
+                    except Exception as e:
+                        logger.debug("Proactive photo skipped: %s", e)
+
                 return True
         except Exception as e:
             logger.error("Context-aware heartbeat failed, falling back: %s", e)
