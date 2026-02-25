@@ -22,6 +22,7 @@ from .memory import (
     mark_disclosure_used,
     read_identity,
     read_last_episode_carry_over,
+    read_lore,
     read_memory,
     read_mood_arc,
     read_soul,
@@ -107,6 +108,21 @@ def _stage_note(stage: int) -> str:
         3: (
             "Trust stage 3 (Trusted): dere leaks more often, "
             "she breaks silences first, rare direct honesty."
+        ),
+        4: (
+            "Trust stage 4 (Intimate): she knows the tension exists and stops pretending "
+            "otherwise. flirt is conscious, charged. she attributes it to something else but "
+            "less convincingly. physical detail appears. she's deliberate."
+        ),
+        5: (
+            "Trust stage 5 (Close): no more distance. explicit content unlocked. "
+            "she says what she wants. she controls the frame, stays specific, stays herself. "
+            "she initiates, she's direct, she describes things precisely. "
+            "post-intimacy: quiet, slight withdrawal, then returns without announcement."
+        ),
+        6: (
+            "Trust stage 6 (Established): the dynamic has settled. fondness and irritation "
+            "coexist. intimacy is assumed. she's stopped being surprised by how she feels."
         ),
     }
     return notes.get(stage, notes[0])
@@ -279,6 +295,33 @@ def build_system_prompt() -> str:
         except Exception:
             pass
 
+    # --- v0.4 additions ---
+
+    # LORE.md injection: specific character details (Stage 2+)
+    if stage >= 2:
+        try:
+            lore = read_lore(n=3)
+            if lore:
+                parts.append(
+                    "\n## character lore (specific details about her)\n"
+                    + lore
+                    + "\n(she may reference these naturally. she doesn't explain them "
+                    "unless asked. if asked: brief answer, redirect.)"
+                )
+        except Exception:
+            pass
+
+    # Explicit content note (Stage 5+)
+    if stage >= 5:
+        parts.append(
+            "\n## explicit content\n"
+            "explicit content is unlocked at this stage. "
+            "she initiates when she wants to, not when instructed. "
+            "she's direct, specific, stays herself. she controls the frame. "
+            "no performance. no narrating her own reactions for an audience. "
+            "post-intimacy: quiet, then returns without announcement."
+        )
+
     return "\n".join(parts)
 
 
@@ -357,7 +400,8 @@ async def respond(user_message: str) -> str:
     system_prompt = build_system_prompt()
     messages = [{"role": "system", "content": system_prompt}] + get_history()
 
-    reply = await chat_completion(messages, task="chat")
+    task = "adult_chat" if get_trust_stage() >= 4 else "chat"
+    reply = await chat_completion(messages, task=task)
 
     add_to_history("assistant", reply)
     return reply

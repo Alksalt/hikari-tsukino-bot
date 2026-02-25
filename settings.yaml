@@ -2,14 +2,12 @@
 # All tunables live here. No code changes needed to swap models or adjust behavior.
 
 models:
-  # OpenRouter model IDs — swap freely. See MODELS.md for full reference.
-  chat: "deepseek/deepseek-v3.2"   # DeepSeek V3 — testing (was: openai/gpt-4o-mini)
-  memory: "deepseek/deepseek-v3.2" # consolidation + reflection
-  vision: "openai/gpt-4o-mini"             # image reactions (must support vision — keep gpt-4o)
-  # Other cheap alternatives to try:
-  # chat: "openai/gpt-4o-mini"             # original default, reliable
-  # chat: "openai/gpt-5-mini"              # if available on your OpenRouter account
-  # chat: "meta-llama/llama-3.3-70b-instruct"
+  # OpenRouter model IDs — swap freely. See research/MODELS.md for full reference.
+  chat: "deepseek/deepseek-v3.2"          # stages 0-3 — strong character following
+  adult_chat: "venice/uncensored:free"    # stages 4+ — uncensored, free (200 req/day)
+  memory: "deepseek/deepseek-v3.2"        # consolidation + reflection
+  vision: "openai/gpt-4o-mini"            # image reactions (must support vision)
+  # adult_chat fallback if venice rate-limits: "nothingiisreal/mn-celeste-12b"
 
 heartbeat:
   min_interval_hours: 4              # minimum gap between proactive messages
@@ -63,7 +61,14 @@ telegram:
 
 photo:
   enabled: false                     # set true to enable VisualSelf photo output
-  model: "black-forest-labs/flux.2-klein"  # ~$0.015/image via OpenRouter
-  stage_threshold: 2                 # minimum trust stage to send photos
+  model: "black-forest-labs/flux.2-klein"  # SFW — ~$0.015/image via OpenRouter
+  stage_threshold: 2                 # minimum trust stage for SFW photos
   heartbeat_probability: 0.15        # chance of proactive photo in context-aware heartbeat (Stage 3)
   max_per_day: 2                     # she's not a content machine
+  nsfw_provider: "venice"            # NSFW photo provider: "venice" (Venice.ai API)
+  nsfw_model: "lustify-v7"           # Venice model: lustify-v7 (realistic) or anime-wai (anime)
+  nsfw_stage_threshold: 5            # Stage 5+ unlocks NSFW photos
+  max_per_day_nsfw: 2                # daily NSFW photo cap (separate from SFW cap)
+
+stages:
+  max_stage: 5                       # 5=Close (explicit), 6=Established (optional)

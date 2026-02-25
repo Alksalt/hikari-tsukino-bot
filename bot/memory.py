@@ -25,6 +25,7 @@ MOOD_MD = DATA_DIR / "MOOD.md"
 IDENTITY_MD = CHARACTER_DIR / "IDENTITY.md"
 SOUL_MD = CHARACTER_DIR / "SOUL.md"
 HEARTBEAT_TEMPLATE_MD = CHARACTER_DIR / "HEARTBEAT_TEMPLATE.md"
+LORE_MD = CHARACTER_DIR / "LORE.md"
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +55,25 @@ def read_memory() -> str:
 
 def read_heartbeat_templates() -> str:
     return read_file(HEARTBEAT_TEMPLATE_MD)
+
+
+def read_lore(n: int = 3) -> str:
+    """Return up to n randomly selected lore items from LORE.md for system prompt injection."""
+    import random
+
+    content = read_file(LORE_MD)
+    if not content:
+        return ""
+    # Extract individual bullet items (lines starting with "- ")
+    items = [
+        ln.strip()[2:].strip()
+        for ln in content.splitlines()
+        if ln.strip().startswith("- ")
+    ]
+    if not items:
+        return ""
+    sample = random.sample(items, min(n, len(items)))
+    return "\n".join(f"- {item}" for item in sample)
 
 
 # ---------------------------------------------------------------------------
