@@ -24,3 +24,6 @@ data/THOUGHTS.md
 data/HEARTBEAT.md
 data/episodes/*.md
 !data/episodes/.gitkeep
+
+# Research / reference docs — local only
+research/

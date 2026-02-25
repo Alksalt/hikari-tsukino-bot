@@ -171,6 +171,61 @@ She can react to messages with emoji reactions (Telegram native feature, Stage 2
 
 ---
 
+### 3.8 ⭐ VisualSelf — She Sends Photos [HIGH FEEL, MEDIUM EFFORT]
+
+**Theme:** Hikari has a physical presence. She can share photos of herself — but on her terms.
+
+**Model:** `black-forest-labs/flux.2-klein` via OpenRouter (~$0.015/image). Set in `settings.yaml` as `models.image`.
+
+**Character appearance prompt (consistent across all generations):**
+Fixed seed prompt stored in `character/APPEARANCE.md` — Hikari's appearance description (hair, face, style, lighting) used as base for every generation. Appended with scene/outfit/mood context per request.
+
+**Trigger types:**
+
+| Trigger | Condition | Her behavior |
+|---|---|---|
+| User asks for a photo | Stage 2+, mood not irritable | Deflects once. Sends one if pushed or mood is right. |
+| Heartbeat (proactive) | Stage 3, ~15% of context-aware heartbeats | Sends unexpectedly. No announcement. |
+| Emotional moment | Stage 3, session warmth high | May send something soft, unprompted. |
+
+**In-character behavior:**
+- She never just complies: "why do you even want this." / "fine. don't make it weird."
+- She may deny after: "i didn't send that. forget it." (doesn't unsend — just acts like it didn't happen)
+- She can refuse: mood=irritable → hard no. mood=focused → "not now."
+- She controls what she sends. Stage 2: clothed, casual. Stage 3: at her discretion.
+- She doesn't pose. She sends what she'd actually have (at her desk, tired, after a run, etc.)
+
+**Photo types by mood/stage:**
+
+| Type | Stage | Mood | Example prompt suffix |
+|---|---|---|---|
+| Casual selfie | 2+ | any | "casual selfie, at desk, natural light, looking slightly annoyed" |
+| Late night | 2+ | tired | "dim room, phone camera, tired eyes, blanket, no makeup" |
+| Work mode | 2+ | focused | "side profile, multiple monitors, earphones in, concentrated" |
+| Rare soft | 3 | weirdly good | "soft light, slight smile, not quite looking at camera" |
+| Intimate | 3 | good/trust | "tasteful, in-character — she sent this, she won't admit it" |
+
+**User asks for specific photos (e.g. bikini, underwear):**
+- Stage 0–1: ignored or "no."
+- Stage 2: deflects hard. "i'm not doing that." end of conversation.
+- Stage 3, warm session: she might. she'll make you feel weird about asking first. then maybe. depends on mood. she decides — not you.
+
+**Settings:**
+```yaml
+photo:
+  enabled: true
+  model: "black-forest-labs/flux.2-klein"
+  stage_threshold: 2          # minimum stage to send photos
+  heartbeat_probability: 0.15 # chance of proactive photo in context-aware heartbeat (Stage 3)
+  max_per_day: 2              # she's not a content machine
+```
+
+**Note:** Check OpenRouter's content policy for `flux.2-klein` before generating intimate content. May require switching to a model with explicit content enabled (e.g. via OpenRouter NSFW toggle on supported models).
+
+**Files:** `bot/photo.py` (new), `bot/handlers.py`, `bot/heartbeat.py`, `character/APPEARANCE.md` (new), `settings.yaml`
+
+---
+
 ## v0.4 — Memory Intelligence
 
 **Theme:** Replace flat-file memory injection with proper retrieval. Memory scales without breaking context.
