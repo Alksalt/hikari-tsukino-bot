@@ -12,6 +12,7 @@ import yaml
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
+from telegram import BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from .handlers import (
@@ -145,6 +146,19 @@ def main() -> None:
     app = build_application()
 
     async def post_init(application: Application) -> None:
+        await application.bot.set_my_commands([
+            BotCommand("start", "wake her up"),
+            BotCommand("help", "list commands"),
+            BotCommand("mood", "what mood she's in today"),
+            BotCommand("memory", "what she remembers about you"),
+            BotCommand("forget", "make her forget a topic"),
+            BotCommand("silence", "stop proactive messages for a while"),
+            BotCommand("unsilence", "let her talk again"),
+            BotCommand("stats", "numbers — trust stage, sessions, models"),
+            BotCommand("model", "switch the chat model"),
+            BotCommand("stage", "[dev] set trust stage manually"),
+            BotCommand("photo", "[dev] force-generate a test photo"),
+        ])
         scheduler = await _setup_scheduler(application)
         scheduler.start()
         logger.info("Scheduler started.")
