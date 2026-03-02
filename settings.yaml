@@ -3,11 +3,9 @@
 
 models:
   # OpenRouter model IDs — swap freely. See research/MODELS.md for full reference.
-  chat: "deepseek/deepseek-v3.2"          # stages 0-3 — strong character following
-  adult_chat: "venice/uncensored:free"    # stages 4+ — uncensored, free (200 req/day)
+  chat: "deepseek/deepseek-v3.2"          # all stages — strong character following
   memory: "deepseek/deepseek-v3.2"        # consolidation + reflection
   vision: "openai/gpt-4o-mini"            # image reactions (must support vision)
-  # adult_chat fallback if venice rate-limits: "nothingiisreal/mn-celeste-12b"
 
 heartbeat:
   min_interval_hours: 4              # minimum gap between proactive messages
@@ -60,15 +58,11 @@ telegram:
   # Example: allowed_user_ids: [123456789]
 
 photo:
-  enabled: false                     # set true to enable VisualSelf photo output
+  enabled: true                      # set false to disable VisualSelf photo output
   model: "black-forest-labs/flux.2-klein"  # SFW — ~$0.015/image via OpenRouter
-  stage_threshold: 2                 # minimum trust stage for SFW photos
+  stage_threshold: 2                 # minimum trust stage for photos
   heartbeat_probability: 0.15        # chance of proactive photo in context-aware heartbeat (Stage 3)
   max_per_day: 2                     # she's not a content machine
-  nsfw_provider: "venice"            # NSFW photo provider: "venice" (Venice.ai API)
-  nsfw_model: "lustify-v7"           # Venice model: lustify-v7 (realistic) or anime-wai (anime)
-  nsfw_stage_threshold: 5            # Stage 5+ unlocks NSFW photos
-  max_per_day_nsfw: 2                # daily NSFW photo cap (separate from SFW cap)
 
 stages:
-  max_stage: 5                       # 5=Close (explicit), 6=Established (optional)
+  max_stage: 5                       # 5=Close (intimate), 6=Established (optional)

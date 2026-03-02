@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import re
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -11,21 +12,132 @@ import yaml
 
 # Paths
 _ROOT = Path(__file__).parent.parent
-DATA_DIR = _ROOT / "data"
-EPISODES_DIR = DATA_DIR / "episodes"
+_BASE_DATA_DIR = _ROOT / "data"
 CHARACTER_DIR = _ROOT / "character"
-
-USER_MD = DATA_DIR / "USER.md"
-MEMORY_MD = DATA_DIR / "MEMORY.md"
-THOUGHTS_MD = DATA_DIR / "THOUGHTS.md"
-HEARTBEAT_MD = DATA_DIR / "HEARTBEAT.md"
-SELF_MD = DATA_DIR / "SELF.md"
-MOOD_MD = DATA_DIR / "MOOD.md"
 
 IDENTITY_MD = CHARACTER_DIR / "IDENTITY.md"
 SOUL_MD = CHARACTER_DIR / "SOUL.md"
 HEARTBEAT_TEMPLATE_MD = CHARACTER_DIR / "HEARTBEAT_TEMPLATE.md"
 LORE_MD = CHARACTER_DIR / "LORE.md"
+
+# ---------------------------------------------------------------------------
+# Multi-user context
+# ---------------------------------------------------------------------------
+
+_current_user_id: contextvars.ContextVar[int] = contextvars.ContextVar("user_id", default=0)
+
+
+def set_current_user(user_id: int) -> None:
+    """Set the active user for all subsequent memory operations."""
+    _current_user_id.set(user_id)
+
+
+def get_current_user() -> int:
+    return _current_user_id.get()
+
+
+def _data_dir() -> Path:
+    """Return the data directory for the current user, creating it if needed."""
+    uid = _current_user_id.get()
+    d = _BASE_DATA_DIR / "users" / str(uid)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _episodes_dir() -> Path:
+    d = _data_dir() / "episodes"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _user_md() -> Path:
+    return _data_dir() / "USER.md"
+
+
+def _memory_md() -> Path:
+    return _data_dir() / "MEMORY.md"
+
+
+def _thoughts_md() -> Path:
+    return _data_dir() / "THOUGHTS.md"
+
+
+def _heartbeat_md() -> Path:
+    return _data_dir() / "HEARTBEAT.md"
+
+
+def _self_md() -> Path:
+    return _data_dir() / "SELF.md"
+
+
+def _mood_md() -> Path:
+    return _data_dir() / "MOOD.md"
+
+
+_DEFAULT_USER_MD = """\
+# User Profile
+<!-- This file is written and updated by the bot. Do not hand-edit during active sessions. -->
+
+## basics
+- name: unknown (update when learned)
+- known preferences: none yet
+- relationship_stage: 0
+- meaningful_exchanges: 0
+
+## open_loops
+<!-- Time-sensitive things to follow up on -->
+none
+
+## known_facts
+<!-- Stable facts about the user the bot has confirmed -->
+none yet
+
+## last_updated: never
+"""
+
+_DEFAULT_HEARTBEAT_MD = """\
+# Heartbeat State
+
+silence_until: null
+last_proactive_sent: null
+last_user_message: null
+used_excuses: []
+proactive_count: 0
+bot_had_last_word: false
+last_session_ended_at: null
+reengagement_sent_at: null
+warmth_floor_modifier: 0
+photos_sent_today: 0
+photos_sent_date: null
+"""
+
+
+def init_user_data(user_id: int) -> None:
+    """Create data dir and default files for a new user (no-op if already exists)."""
+    user_dir = _BASE_DATA_DIR / "users" / str(user_id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    (user_dir / "episodes").mkdir(exist_ok=True)
+
+    user_md = user_dir / "USER.md"
+    if not user_md.exists():
+        user_md.write_text(_DEFAULT_USER_MD, encoding="utf-8")
+
+    heartbeat_md = user_dir / "HEARTBEAT.md"
+    if not heartbeat_md.exists():
+        heartbeat_md.write_text(_DEFAULT_HEARTBEAT_MD, encoding="utf-8")
+
+    for fname in ("MEMORY.md", "THOUGHTS.md", "SELF.md"):
+        p = user_dir / fname
+        if not p.exists():
+            p.write_text("", encoding="utf-8")
+
+
+def list_all_user_ids() -> list[int]:
+    """Return list of all user IDs that have data directories."""
+    users_dir = _BASE_DATA_DIR / "users"
+    if not users_dir.exists():
+        return []
+    return [int(d.name) for d in users_dir.iterdir() if d.is_dir() and d.name.isdigit()]
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +162,7 @@ def read_soul() -> str:
 
 
 def read_memory() -> str:
-    return read_file(MEMORY_MD)
+    return read_file(_memory_md())
 
 
 def read_heartbeat_templates() -> str:
@@ -83,7 +195,7 @@ def read_lore(n: int = 3) -> str:
 
 def _parse_user_md() -> dict[str, Any]:
     """Parse USER.md into a dict. Handles missing file gracefully."""
-    content = read_file(USER_MD)
+    content = read_file(_user_md())
     if not content:
         return {
             "name": "unknown",
@@ -160,14 +272,14 @@ def get_open_loops() -> list[str]:
 
 def update_user_field(key: str, value: Any) -> None:
     """Update a single key: value line in the ## basics section of USER.md."""
-    content = read_file(USER_MD)
+    content = read_file(_user_md())
     if not content:
         return
 
     pattern = rf"(- {re.escape(key)}:\s*)(.+)"
     replacement = rf"\g<1>{value}"
     new_content = re.sub(pattern, replacement, content)
-    USER_MD.write_text(new_content, encoding="utf-8")
+    _user_md().write_text(new_content, encoding="utf-8")
 
 
 def increment_meaningful_exchanges() -> int:
@@ -184,7 +296,7 @@ def set_trust_stage(stage: int) -> None:
 
 def add_open_loop(loop: str) -> None:
     """Append an open loop to USER.md."""
-    content = read_file(USER_MD)
+    content = read_file(_user_md())
     if not content:
         return
 
@@ -199,12 +311,12 @@ def add_open_loop(loop: str) -> None:
         new_loops = existing + f"\n- {loop}"
 
     new_content = content[: loops_match.start(2)] + new_loops + content[loops_match.end(2) :]
-    USER_MD.write_text(new_content, encoding="utf-8")
+    _user_md().write_text(new_content, encoding="utf-8")
 
 
 def clear_open_loops() -> None:
     """Clear all open loops in USER.md."""
-    content = read_file(USER_MD)
+    content = read_file(_user_md())
     if not content:
         return
     new_content = re.sub(
@@ -213,12 +325,12 @@ def clear_open_loops() -> None:
         content,
         flags=re.DOTALL,
     )
-    USER_MD.write_text(new_content, encoding="utf-8")
+    _user_md().write_text(new_content, encoding="utf-8")
 
 
 def add_known_fact(fact: str) -> None:
     """Append a known fact to USER.md, prefixed with today's date for age tracking."""
-    content = read_file(USER_MD)
+    content = read_file(_user_md())
     if not content:
         return
 
@@ -236,7 +348,7 @@ def add_known_fact(fact: str) -> None:
     new_content = (
         content[: facts_match.start(2)] + new_facts + content[facts_match.end(2) :]
     )
-    USER_MD.write_text(new_content, encoding="utf-8")
+    _user_md().write_text(new_content, encoding="utf-8")
 
 
 def get_facts_with_age() -> list[dict[str, Any]]:
@@ -280,7 +392,7 @@ def get_facts_with_age() -> list[dict[str, Any]]:
 
 def forget_topic(topic: str) -> None:
     """Remove lines containing topic from known_facts and open_loops in USER.md."""
-    content = read_file(USER_MD)
+    content = read_file(_user_md())
     if not content:
         return
 
@@ -291,10 +403,10 @@ def forget_topic(topic: str) -> None:
         if topic.lower() not in line.lower()
         or not line.strip().startswith("- ")
     ]
-    USER_MD.write_text("\n".join(filtered), encoding="utf-8")
+    _user_md().write_text("\n".join(filtered), encoding="utf-8")
 
     # Also clean MEMORY.md
-    mem_content = read_file(MEMORY_MD)
+    mem_content = read_file(_memory_md())
     if mem_content:
         mem_lines = mem_content.splitlines()
         filtered_mem = [
@@ -302,7 +414,7 @@ def forget_topic(topic: str) -> None:
             for line in mem_lines
             if topic.lower() not in line.lower() or not line.strip().startswith("- ")
         ]
-        MEMORY_MD.write_text("\n".join(filtered_mem), encoding="utf-8")
+        _memory_md().write_text("\n".join(filtered_mem), encoding="utf-8")
 
 
 def update_last_updated() -> None:
@@ -315,7 +427,7 @@ def update_last_updated() -> None:
 
 
 def _read_heartbeat_yaml() -> dict[str, Any]:
-    content = read_file(HEARTBEAT_MD)
+    content = read_file(_heartbeat_md())
     if not content:
         return {}
     try:
@@ -333,7 +445,7 @@ def _read_heartbeat_yaml() -> dict[str, Any]:
 
 def _write_heartbeat_yaml(state: dict[str, Any]) -> None:
     """Rewrite HEARTBEAT.md preserving comments, updating YAML fields."""
-    content = read_file(HEARTBEAT_MD)
+    content = read_file(_heartbeat_md())
     if not content:
         content = ""
 
@@ -353,7 +465,7 @@ def _write_heartbeat_yaml(state: dict[str, Any]) -> None:
     parts = ["\n".join(header_lines), yaml_block.rstrip()]
     if section_lines:
         parts.append("\n".join(section_lines))
-    HEARTBEAT_MD.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    _heartbeat_md().write_text("\n".join(parts) + "\n", encoding="utf-8")
 
 
 def get_heartbeat_state() -> dict[str, Any]:
@@ -422,7 +534,7 @@ def record_proactive_sent(excuse_index: int) -> None:
 
 
 def today_episode_path() -> Path:
-    return EPISODES_DIR / f"{date.today().isoformat()}.md"
+    return _episodes_dir() / f"{date.today().isoformat()}.md"
 
 
 def read_today_episode() -> str:
@@ -431,15 +543,14 @@ def read_today_episode() -> str:
 
 def write_episode(content: str, episode_date: date | None = None) -> Path:
     target_date = episode_date or date.today()
-    path = EPISODES_DIR / f"{target_date.isoformat()}.md"
-    EPISODES_DIR.mkdir(parents=True, exist_ok=True)
+    path = _episodes_dir() / f"{target_date.isoformat()}.md"
     path.write_text(content, encoding="utf-8")
     return path
 
 
 def list_recent_episodes(n: int = 3) -> list[Path]:
     """Return up to n most recent episode files, newest first."""
-    episodes = sorted(EPISODES_DIR.glob("????-??-??.md"), reverse=True)
+    episodes = sorted(_episodes_dir().glob("????-??-??.md"), reverse=True)
     return episodes[:n]
 
 
@@ -455,7 +566,7 @@ def read_recent_episodes(n: int = 3) -> str:
 
 def read_last_episode_carry_over() -> str:
     """Return the carry_over line from the most recent episode file, or empty string."""
-    episodes = sorted(EPISODES_DIR.glob("????-??-??.md"), reverse=True)
+    episodes = sorted(_episodes_dir().glob("????-??-??.md"), reverse=True)
     for path in episodes:
         content = read_file(path)
         m = re.search(r"## carry_over\n(.+?)(?:\n##|\Z)", content, re.DOTALL)
@@ -468,7 +579,7 @@ def prune_old_episodes(retention_days: int) -> int:
     """Delete episode files older than retention_days. Returns count deleted."""
     cutoff = date.today().toordinal() - retention_days
     deleted = 0
-    for path in EPISODES_DIR.glob("????-??-??.md"):
+    for path in _episodes_dir().glob("????-??-??.md"):
         try:
             episode_date = date.fromisoformat(path.stem)
             if episode_date.toordinal() < cutoff:
@@ -486,7 +597,7 @@ def prune_old_episodes(retention_days: int) -> int:
 
 def append_to_memory(section: str, fact: str) -> None:
     """Add a fact under a section in MEMORY.md."""
-    content = read_file(MEMORY_MD)
+    content = read_file(_memory_md())
     if not content:
         content = "# Long-Term Memory\n\n"
 
@@ -502,7 +613,7 @@ def append_to_memory(section: str, fact: str) -> None:
     else:
         content += f"\n## {section}\n- {fact}\n"
 
-    MEMORY_MD.write_text(content, encoding="utf-8")
+    _memory_md().write_text(content, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -512,10 +623,10 @@ def append_to_memory(section: str, fact: str) -> None:
 
 def append_thought(thought: str) -> None:
     """Append a dated thought entry to THOUGHTS.md."""
-    content = read_file(THOUGHTS_MD)
+    content = read_file(_thoughts_md())
     today = date.today().isoformat()
     entry = f"\n## {today}\n{thought}\n"
-    THOUGHTS_MD.write_text((content or "") + entry, encoding="utf-8")
+    _thoughts_md().write_text((content or "") + entry, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -525,14 +636,14 @@ def append_thought(thought: str) -> None:
 
 def read_self_md() -> str:
     """Return the full content of SELF.md, or empty string if not found."""
-    return read_file(SELF_MD)
+    return read_file(_self_md())
 
 
 def write_self_preoccupation(thought: str) -> None:
     """Update the ## preoccupation section in SELF.md."""
-    content = read_file(SELF_MD)
+    content = read_file(_self_md())
     if not content:
-        SELF_MD.write_text(
+        _self_md().write_text(
             f"# Hikari's Self-Model\n\n## preoccupation\n{thought}\n\n"
             "## staged disclosures\nnone yet.\n\n"
             "## things she told the user\nnone yet.\n\n"
@@ -547,12 +658,12 @@ def write_self_preoccupation(thought: str) -> None:
         content,
         flags=re.DOTALL,
     )
-    SELF_MD.write_text(new_content, encoding="utf-8")
+    _self_md().write_text(new_content, encoding="utf-8")
 
 
 def get_self_preoccupation() -> str:
     """Return current preoccupation line, or empty string."""
-    content = read_file(SELF_MD)
+    content = read_file(_self_md())
     if not content:
         return ""
     m = re.search(r"## preoccupation\n(.+?)(?=\n##|\Z)", content, re.DOTALL)
@@ -564,7 +675,7 @@ def get_self_preoccupation() -> str:
 
 def get_staged_disclosure(stage: int) -> str | None:
     """Return first unused staged disclosure at or below current trust stage, or None."""
-    content = read_file(SELF_MD)
+    content = read_file(_self_md())
     if not content:
         return None
     m = re.search(r"## staged disclosures\n(.*?)(?=\n##|\Z)", content, re.DOTALL)
@@ -581,7 +692,7 @@ def get_staged_disclosure(stage: int) -> str | None:
 
 def mark_disclosure_used(disclosure_text: str) -> None:
     """Mark a staged disclosure as used by text match."""
-    content = read_file(SELF_MD)
+    content = read_file(_self_md())
     if not content:
         return
     new_content = re.sub(
@@ -590,12 +701,12 @@ def mark_disclosure_used(disclosure_text: str) -> None:
         content,
         flags=re.IGNORECASE,
     )
-    SELF_MD.write_text(new_content, encoding="utf-8")
+    _self_md().write_text(new_content, encoding="utf-8")
 
 
 def add_self_disclosure(text: str) -> None:
     """Add something Hikari told the user to the competitive memory list."""
-    content = read_file(SELF_MD)
+    content = read_file(_self_md())
     if not content:
         return
     dated_entry = f"[{date.today().isoformat()}] {text}"
@@ -608,12 +719,12 @@ def add_self_disclosure(text: str) -> None:
     else:
         new_body = existing + f"\n- {dated_entry}\n"
     new_content = content[: m.start(2)] + new_body + content[m.end(2) :]
-    SELF_MD.write_text(new_content, encoding="utf-8")
+    _self_md().write_text(new_content, encoding="utf-8")
 
 
 def get_self_disclosures() -> list[dict[str, str]]:
     """Return list of things Hikari told the user: [{date, text}]."""
-    content = read_file(SELF_MD)
+    content = read_file(_self_md())
     if not content:
         return []
     m = re.search(r"## things she told the user\n(.*?)(?=\n##|\Z)", content, re.DOTALL)
@@ -645,8 +756,8 @@ recent_session_temperatures: []
 
 
 def _ensure_mood_md() -> None:
-    if not MOOD_MD.exists():
-        MOOD_MD.write_text(
+    if not _mood_md().exists():
+        _mood_md().write_text(
             _MOOD_MD_TEMPLATE.format(today=date.today().isoformat()), encoding="utf-8"
         )
 
@@ -654,7 +765,7 @@ def _ensure_mood_md() -> None:
 def read_mood_arc() -> dict[str, Any]:
     """Return parsed MOOD.md state."""
     _ensure_mood_md()
-    content = read_file(MOOD_MD)
+    content = read_file(_mood_md())
     try:
         # Strip comment lines then parse YAML
         lines = [ln for ln in content.splitlines() if not ln.strip().startswith("#")]
@@ -676,7 +787,7 @@ def append_session_temperature(session_date: date, temperature: str) -> None:
     temps.append(f"[{session_date.isoformat()}] {temperature}")
     temps = temps[-5:]  # keep last 5
 
-    content = read_file(MOOD_MD)
+    content = read_file(_mood_md())
     # Rebuild the file with updated temperatures
     comment_lines = [ln for ln in content.splitlines() if ln.strip().startswith("#")]
     data_lines = [ln for ln in content.splitlines() if not ln.strip().startswith("#")]
@@ -686,7 +797,7 @@ def append_session_temperature(session_date: date, temperature: str) -> None:
         data = {}
     data["recent_session_temperatures"] = temps
     yaml_block = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    MOOD_MD.write_text(
+    _mood_md().write_text(
         "\n".join(comment_lines) + "\n" + yaml_block, encoding="utf-8"
     )
 
@@ -694,7 +805,7 @@ def append_session_temperature(session_date: date, temperature: str) -> None:
 def write_mood_arc(arc: str, arc_note: str) -> None:
     """Update current_arc and arc_note in MOOD.md."""
     _ensure_mood_md()
-    content = read_file(MOOD_MD)
+    content = read_file(_mood_md())
     comment_lines = [ln for ln in content.splitlines() if ln.strip().startswith("#")]
     data_lines = [ln for ln in content.splitlines() if not ln.strip().startswith("#")]
     try:
@@ -705,7 +816,7 @@ def write_mood_arc(arc: str, arc_note: str) -> None:
     data["arc_detected_at"] = date.today().isoformat()
     data["arc_note"] = arc_note
     yaml_block = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    MOOD_MD.write_text(
+    _mood_md().write_text(
         "\n".join(comment_lines) + "\n" + yaml_block, encoding="utf-8"
     )
 

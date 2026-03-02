@@ -20,6 +20,7 @@ from .memory import (
     get_meaningful_exchanges,
     get_trust_stage,
     increment_meaningful_exchanges,
+    set_current_user,
     set_session_ended,
     set_trust_stage,
     update_heartbeat_state,
@@ -94,19 +95,20 @@ def _build_carry_over_prompt(
     ]
 
 
-async def run_consolidation() -> bool:
+async def run_consolidation(user_id: int = 0) -> bool:
     """
     Run memory consolidation for the current session.
     Returns True if consolidation ran, False if session was too short.
     """
-    history = get_history()
-    turn_count = get_session_turn_count()
+    set_current_user(user_id)
+    history = get_history(user_id)
+    turn_count = get_session_turn_count(user_id)
 
     # Detect if bot had the last word (for re-engagement nudge)
     bot_last = bool(history and history[-1]["role"] == "assistant")
 
     if turn_count < 2:
-        clear_history()
+        clear_history(user_id)
         return False
 
     try:
@@ -121,7 +123,7 @@ async def run_consolidation() -> bool:
 
         data = yaml.safe_load(raw_yaml)
     except Exception:
-        clear_history()
+        clear_history(user_id)
         return False
 
     summary = data.get("summary", "").strip()
@@ -191,10 +193,11 @@ async def run_consolidation() -> bool:
         speed = settings.get("trust", {}).get("progression_speed", "normal")
         threshold = _exchanges_per_stage(speed)
 
-        if speed != "instant" and stage < 3:
+        max_stage = settings.get("stages", {}).get("max_stage", 5)
+        if speed != "instant" and stage < max_stage:
             stage_start_count = stage * threshold
             if count - stage_start_count >= threshold:
-                new_stage = min(stage + 1, 3)
+                new_stage = min(stage + 1, max_stage)
                 set_trust_stage(new_stage)
 
         # Append session temperature to MOOD.md
@@ -226,5 +229,5 @@ async def run_consolidation() -> bool:
     set_session_ended(bot_had_last_word=bot_last)
 
     update_last_updated()
-    clear_history()
+    clear_history(user_id)
     return True

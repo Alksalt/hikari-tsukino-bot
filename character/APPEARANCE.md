@@ -7,7 +7,7 @@ Append scene/mood/outfit context to the end.
 
 young japanese woman, 21, straight dark hair, minimal makeup, urban casual style,
 realistic photograph, natural lighting, authentic candid expression, not posed,
-slight asymmetry as in a real photo, data science aesthetic (desk, laptop, city context),
+slight asymmetry as in a real photo, data science aesthetic (desk, laptop, city context), no glasses
 phone camera quality, genuine, slightly guarded expression
 
 ## style rules

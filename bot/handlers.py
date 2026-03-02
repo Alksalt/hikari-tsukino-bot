@@ -32,10 +32,12 @@ from .memory import (
     get_meaningful_exchanges,
     get_trust_stage,
     get_user_state,
+    init_user_data,
     read_identity,
     read_soul,
     record_photo_sent,
     record_user_message_time,
+    set_current_user,
     set_silence,
     set_trust_stage,
 )
@@ -64,6 +66,12 @@ def _is_allowed(user_id: int) -> bool:
     return user_id in allowed
 
 
+def _setup_user(user_id: int) -> None:
+    """Set the current user context and ensure their data directory exists."""
+    set_current_user(user_id)
+    init_user_data(user_id)
+
+
 def _calculate_delay(response: str, mood: str, settings: dict[str, Any]) -> float:
     """Calculate realistic send delay in seconds based on response length and mood."""
     delay_cfg = settings.get("response_delay", {})
@@ -85,7 +93,9 @@ def _calculate_delay(response: str, mood: str, settings: dict[str, Any]) -> floa
     return total
 
 
-async def _send_with_delay(update: Update, text: str, mood: str = "") -> None:
+async def _send_with_delay(
+    update: Update, text: str, mood: str = "", user_id: int = 0
+) -> None:
     """Send message with typing indicator and realistic delay if enabled."""
     settings = _load_settings()
     delay_cfg = settings.get("response_delay", {})
@@ -109,7 +119,7 @@ async def _send_with_delay(update: Update, text: str, mood: str = "") -> None:
         and len(text) > 80
         and stage >= 2
         and random.random() < 0.10
-        and consume_false_start()
+        and consume_false_start(user_id)
     ):
         await update.message.chat.send_action(ChatAction.TYPING)
         await asyncio.sleep(2.5)
@@ -162,15 +172,17 @@ _BREAK_ACTIONS = [
 ]
 
 
-def _should_ignore(mood: str, stage: int, settings: dict[str, Any]) -> bool:
+def _should_ignore(
+    mood: str, stage: int, settings: dict[str, Any], user_id: int = 0
+) -> bool:
     """Return True if this message should be ignored (no real response)."""
     ignore_cfg = settings.get("ignore", {})
     if not ignore_cfg.get("enabled", True):
         return False
-    if is_ignore_cooldown():
+    if is_ignore_cooldown(user_id):
         return False
     max_streak = int(ignore_cfg.get("max_streak", 3))
-    if get_ignore_streak() >= max_streak:
+    if get_ignore_streak(user_id) >= max_streak:
         return False  # streak maxed — must break silence now
     prob_row = _IGNORE_PROBS.get(mood, _IGNORE_PROBS["focused"])
     prob = prob_row.get(stage, 0.0)
@@ -183,18 +195,22 @@ def _should_ignore(mood: str, stage: int, settings: dict[str, Any]) -> bool:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
 
     reply = await respond(
         "__system: user just started the bot for the first time. give a brief intro as Hikari — "
-        "annoyed but present. don't say 'I'm Hikari' — she doesn't introduce herself like an AI."
+        "annoyed but present. don't say 'I'm Hikari' — she doesn't introduce herself like an AI.",
+        user_id=user_id,
     )
     await _send(update, reply)
 
 
 async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
 
     args = context.args
@@ -213,8 +229,10 @@ async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_silence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
 
     args = context.args
     minutes = 120  # default 2 hours
@@ -237,15 +255,19 @@ async def cmd_silence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cmd_unsilence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
     set_silence(None)
     await _send(update, "...fine. silence mode off. not that you asked nicely.")
 
 
 async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
 
     user_state = get_user_state()
     known_facts = user_state.get("known_facts", [])
@@ -270,24 +292,29 @@ async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         prompt_parts.append("things to follow up on: " + "; ".join(open_loops))
     prompt_parts.append(f"trust stage: {stage}")
 
-    reply = await respond("\n".join(prompt_parts))
+    reply = await respond("\n".join(prompt_parts), user_id=user_id)
     await _send(update, reply)
 
 
 async def cmd_mood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
     mood = get_daily_mood()
     reply = await respond(
         f"__system: user asked about your current mood. your mood today is '{mood}'. "
-        "describe it in-character, briefly, in Hikari's voice. stay in character."
+        "describe it in-character, briefly, in Hikari's voice. stay in character.",
+        user_id=user_id,
     )
     await _send(update, reply)
 
 
 async def cmd_forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
 
     args = context.args
     if not args:
@@ -300,8 +327,10 @@ async def cmd_forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
 
     stage = get_trust_stage()
     exchanges = get_meaningful_exchanges()
@@ -326,25 +355,52 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_stage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Dev command: manually set trust stage."""
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
 
     args = context.args
+    max_stage = _load_settings().get("stages", {}).get("max_stage", 5)
     if not args:
         current = get_trust_stage()
-        await _send(update, f"current trust stage: {current}\nusage: /stage [0-3]")
+        await _send(update, f"current trust stage: {current}\nusage: /stage [0-{max_stage}]")
         return
 
     try:
         stage = int(args[0])
-        if stage not in (0, 1, 2, 3):
+        if not (0 <= stage <= max_stage):
             raise ValueError
     except ValueError:
-        await _send(update, "stage must be 0, 1, 2, or 3.")
+        await _send(update, f"stage must be 0–{max_stage}.")
         return
 
     set_trust_stage(stage)
     await _send(update, f"[dev] trust stage set to {stage}.")
+
+
+async def cmd_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Dev command: force-generate a test photo regardless of stage/mood checks."""
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
+        return
+    _setup_user(user_id)
+    mood = get_daily_mood()
+    stage = get_trust_stage()
+    await _send(update, "...")
+    try:
+        image_bytes = await generate_photo(mood, stage)
+        if image_bytes:
+            import io
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=io.BytesIO(image_bytes),
+            )
+        else:
+            await _send(update, "generation failed. check logs and OPENROUTER_API_KEY.")
+    except Exception as e:
+        logger.error("cmd_photo failed: %s", e)
+        await _send(update, "something went wrong. check logs.")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -360,7 +416,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/mood — how i'm feeling today\n"
         "/forget [topic] — i'll pretend i never knew\n"
         "/stats — boring numbers\n"
-        "/stage [0-3] — dev: set trust stage\n"
+        "/stage [0-5] — dev: set trust stage\n"
+        "/photo — dev: force-generate a test photo\n"
         "/help — this"
     )
     await _send(update, text)
@@ -374,8 +431,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.text:
         return
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
 
     user_text = update.message.text.strip()
     if not user_text:
@@ -394,24 +453,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         stage = get_trust_stage()
 
         # Count down post-break cooldown (once per incoming message)
-        tick_ignore_cooldown()
+        tick_ignore_cooldown(user_id)
 
         # Ignore mechanic: sometimes she just doesn't answer
-        if _should_ignore(mood, stage, settings):
-            increment_ignore_streak()
+        if _should_ignore(mood, stage, settings, user_id):
+            increment_ignore_streak(user_id)
             record_user_message_time()  # still update heartbeat state
             action = random.choice(_IGNORE_ACTIONS)
-            await _send_with_delay(update, action, mood=mood)
+            await _send_with_delay(update, action, mood=mood, user_id=user_id)
             return
 
         # If a streak was active: break silence with a short line before responding
-        if get_ignore_streak() > 0:
+        if get_ignore_streak(user_id) > 0:
             break_text = random.choice(_BREAK_ACTIONS)
-            await _send_with_delay(update, break_text, mood=mood)
-            reset_ignore_streak()
+            await _send_with_delay(update, break_text, mood=mood, user_id=user_id)
+            reset_ignore_streak(user_id)
 
-        reply = await respond(user_text)
-        await _send_with_delay(update, reply, mood=mood)
+        reply = await respond(user_text, user_id=user_id)
+        await _send_with_delay(update, reply, mood=mood, user_id=user_id)
     except Exception as e:
         logger.error("Chat response failed: %s", e)
         # Silent failure — Hikari goes quiet rather than sending an error
@@ -426,8 +485,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Handle incoming photos — Hikari reacts in-character via vision model."""
     if not update.message or not update.message.photo:
         return
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
 
     try:
         # Highest-resolution version
@@ -451,7 +512,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         mood = get_daily_mood()
         reply = await chat_completion_vision(prompt, image_url, task="vision")
-        await _send_with_delay(update, reply, mood=mood)
+        await _send_with_delay(update, reply, mood=mood, user_id=user_id)
     except Exception as e:
         logger.error("Photo handler failed: %s", e)
 
@@ -481,8 +542,10 @@ async def handle_photo_request(update: Update, context: ContextTypes.DEFAULT_TYP
     """Handle user requesting a photo from Hikari."""
     if not update.message:
         return
-    if not _is_allowed(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id):
         return
+    _setup_user(user_id)
 
     settings = _load_settings()
     mood = get_daily_mood()
@@ -490,12 +553,12 @@ async def handle_photo_request(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if not can_send_photo(stage, mood, settings):
         refusal = random.choice(_PHOTO_REFUSALS_HARD)
-        await _send_with_delay(update, refusal, mood=mood)
+        await _send_with_delay(update, refusal, mood=mood, user_id=user_id)
         return
 
     # Preamble — in-character reluctance
     preamble = random.choice(_PHOTO_PREAMBLES)
-    await _send_with_delay(update, preamble, mood=mood)
+    await _send_with_delay(update, preamble, mood=mood, user_id=user_id)
     await asyncio.sleep(1.5)
 
     try:
@@ -521,6 +584,7 @@ async def handle_photo_request(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def send_proactive_photo(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Send an unexpected photo from Hikari (heartbeat use). Returns True if sent."""
+    set_current_user(chat_id)
     settings = _load_settings()
     # Read mood/stage from memory rather than update context
     from .chat import get_daily_mood as _mood
@@ -556,11 +620,11 @@ async def send_proactive_photo(chat_id: int, context: ContextTypes.DEFAULT_TYPE)
 # ---------------------------------------------------------------------------
 
 
-async def session_timeout_callback() -> None:
+async def session_timeout_callback(user_id: int = 0) -> None:
     """Called when session timeout fires — triggers memory consolidation."""
     try:
-        ran = await run_consolidation()
+        ran = await run_consolidation(user_id)
         if ran:
-            logger.info("Memory consolidation completed.")
+            logger.info("Memory consolidation completed for user %d.", user_id)
     except Exception as e:
         logger.error("Consolidation failed: %s", e)

@@ -11,6 +11,7 @@ import yaml
 
 from .llm import chat_completion
 from .memory import (
+    get_current_user,
     get_facts_with_age,
     get_heartbeat_state,
     get_open_loops,
@@ -28,21 +29,27 @@ from .memory import (
     read_soul,
     read_today_episode,
     record_user_message_time,
+    set_current_user,
 )
 
 _ROOT = Path(__file__).parent.parent
 _SETTINGS_PATH = _ROOT / "settings.yaml"
 
-# In-memory conversation history: list of {"role": "user"|"assistant", "content": str}
-_history: list[dict[str, str]] = []
-_session_turn_count: int = 0
+# Per-user session state keyed by Telegram user_id
+_sessions: dict[int, dict] = {}
 
-# False start: typing → disappears → reappears (max once per session)
-_false_start_used: bool = False
 
-# Ignore mechanic: consecutive messages she doesn't respond to
-_ignore_streak: int = 0    # how many consecutive messages currently being ignored
-_ignore_cooldown: int = 0  # turns until next ignore is allowed (post-break)
+def _session(user_id: int) -> dict:
+    """Return (creating if needed) the session dict for a user."""
+    if user_id not in _sessions:
+        _sessions[user_id] = {
+            "history": [],
+            "session_turn_count": 0,
+            "false_start_used": False,
+            "ignore_streak": 0,
+            "ignore_cooldown": 0,
+        }
+    return _sessions[user_id]
 
 
 def _load_settings() -> dict[str, Any]:
@@ -115,9 +122,8 @@ def _stage_note(stage: int) -> str:
             "less convincingly. physical detail appears. she's deliberate."
         ),
         5: (
-            "Trust stage 5 (Close): no more distance. explicit content unlocked. "
-            "she says what she wants. she controls the frame, stays specific, stays herself. "
-            "she initiates, she's direct, she describes things precisely. "
+            "Trust stage 5 (Close): no more distance. she's stopped pretending she doesn't feel "
+            "what she feels. she says what she wants, specifically. she controls the frame. "
             "post-intimacy: quiet, slight withdrawal, then returns without announcement."
         ),
         6: (
@@ -137,6 +143,9 @@ _CONFIDENCE_PREFIXES = {
 
 def build_system_prompt() -> str:
     """Assemble the full system prompt from character files + user context."""
+    user_id = get_current_user()
+    sess = _session(user_id)
+
     identity = read_identity()
     soul = read_soul()
     stage = get_trust_stage()
@@ -156,7 +165,7 @@ def build_system_prompt() -> str:
         parts.append(f"\n## current mood\n{_mood_note(mood)}")
 
     # Session-opening continuity (M1): carry-over from last session, Stage 2+
-    if stage >= 2 and _session_turn_count == 0:
+    if stage >= 2 and sess["session_turn_count"] == 0:
         carry_over = read_last_episode_carry_over()
         if carry_over:
             parts.append(f"\n## carry-over from last session\n{carry_over}")
@@ -311,45 +320,34 @@ def build_system_prompt() -> str:
         except Exception:
             pass
 
-    # Explicit content note (Stage 5+)
-    if stage >= 5:
-        parts.append(
-            "\n## explicit content\n"
-            "explicit content is unlocked at this stage. "
-            "she initiates when she wants to, not when instructed. "
-            "she's direct, specific, stays herself. she controls the frame. "
-            "no performance. no narrating her own reactions for an audience. "
-            "post-intimacy: quiet, then returns without announcement."
-        )
-
     return "\n".join(parts)
 
 
-def get_history() -> list[dict[str, str]]:
-    """Return trimmed conversation history."""
+def get_history(user_id: int = 0) -> list[dict[str, str]]:
+    """Return trimmed conversation history for a user."""
     window = _get_context_window() * 2  # pairs of user+assistant turns
-    return _history[-window:]
+    return _session(user_id)["history"][-window:]
 
 
-def add_to_history(role: str, content: str) -> None:
-    _history.append({"role": role, "content": content})
+def add_to_history(user_id: int, role: str, content: str) -> None:
+    _session(user_id)["history"].append({"role": role, "content": content})
 
 
-def clear_history() -> None:
-    global _session_turn_count, _false_start_used, _ignore_streak, _ignore_cooldown
-    _history.clear()
-    _session_turn_count = 0
-    _false_start_used = False
-    _ignore_streak = 0
-    _ignore_cooldown = 0
+def clear_history(user_id: int = 0) -> None:
+    sess = _session(user_id)
+    sess["history"].clear()
+    sess["session_turn_count"] = 0
+    sess["false_start_used"] = False
+    sess["ignore_streak"] = 0
+    sess["ignore_cooldown"] = 0
 
 
-def consume_false_start() -> bool:
+def consume_false_start(user_id: int = 0) -> bool:
     """Return True and mark used if false start hasn't fired this session."""
-    global _false_start_used
-    if _false_start_used:
+    sess = _session(user_id)
+    if sess["false_start_used"]:
         return False
-    _false_start_used = True
+    sess["false_start_used"] = True
     return True
 
 
@@ -358,50 +356,47 @@ def consume_false_start() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def get_ignore_streak() -> int:
-    return _ignore_streak
+def get_ignore_streak(user_id: int = 0) -> int:
+    return _session(user_id)["ignore_streak"]
 
 
-def is_ignore_cooldown() -> bool:
-    return _ignore_cooldown > 0
+def is_ignore_cooldown(user_id: int = 0) -> bool:
+    return _session(user_id)["ignore_cooldown"] > 0
 
 
-def increment_ignore_streak() -> None:
-    global _ignore_streak
-    _ignore_streak += 1
+def increment_ignore_streak(user_id: int = 0) -> None:
+    _session(user_id)["ignore_streak"] += 1
 
 
-def reset_ignore_streak() -> None:
+def reset_ignore_streak(user_id: int = 0) -> None:
     """Break silence: reset streak and impose a cooldown so she can't immediately re-ignore."""
-    global _ignore_streak, _ignore_cooldown
-    _ignore_streak = 0
-    _ignore_cooldown = 3  # can't ignore again for 3 turns
+    sess = _session(user_id)
+    sess["ignore_streak"] = 0
+    sess["ignore_cooldown"] = 3  # can't ignore again for 3 turns
 
 
-def tick_ignore_cooldown() -> None:
+def tick_ignore_cooldown(user_id: int = 0) -> None:
     """Decrement post-break cooldown. Call once per incoming user message."""
-    global _ignore_cooldown
-    if _ignore_cooldown > 0:
-        _ignore_cooldown -= 1
+    sess = _session(user_id)
+    if sess["ignore_cooldown"] > 0:
+        sess["ignore_cooldown"] -= 1
 
 
-def get_session_turn_count() -> int:
-    return _session_turn_count
+def get_session_turn_count(user_id: int = 0) -> int:
+    return _session(user_id)["session_turn_count"]
 
 
-async def respond(user_message: str) -> str:
+async def respond(user_message: str, user_id: int = 0) -> str:
     """Process a user message and return Hikari's response."""
-    global _session_turn_count
-
+    set_current_user(user_id)
     record_user_message_time()
-    add_to_history("user", user_message)
-    _session_turn_count += 1
+    add_to_history(user_id, "user", user_message)
+    _session(user_id)["session_turn_count"] += 1
 
     system_prompt = build_system_prompt()
-    messages = [{"role": "system", "content": system_prompt}] + get_history()
+    messages = [{"role": "system", "content": system_prompt}] + get_history(user_id)
 
-    task = "adult_chat" if get_trust_stage() >= 4 else "chat"
-    reply = await chat_completion(messages, task=task)
+    reply = await chat_completion(messages, task="chat")
 
-    add_to_history("assistant", reply)
+    add_to_history(user_id, "assistant", reply)
     return reply

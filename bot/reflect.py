@@ -16,6 +16,7 @@ from .memory import (
     read_memory,
     read_mood_arc,
     read_recent_episodes,
+    set_current_user,
     write_mood_arc,
     write_self_preoccupation,
 )
@@ -112,12 +113,13 @@ Rules:
     ]
 
 
-async def run_reflection() -> bool:
+async def run_reflection(user_id: int = 0) -> bool:
     """
     Run daily reflection. Promotes facts to MEMORY.md, writes THOUGHTS.md,
     generates SELF.md preoccupation, and updates MOOD.md arc.
     Returns True if reflection ran.
     """
+    set_current_user(user_id)
     settings = _load_settings()
     retention_days = settings.get("memory", {}).get("episode_retention_days", 30)
 

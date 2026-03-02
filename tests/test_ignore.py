@@ -63,7 +63,7 @@ def test_tick_ignore_cooldown_no_underflow():
     assert not is_ignore_cooldown()
     tick_ignore_cooldown()
     assert not is_ignore_cooldown()
-    assert chat_module._ignore_cooldown == 0
+    assert chat_module._sessions.get(0, {}).get("ignore_cooldown", 0) == 0
 
 
 def test_clear_history_resets_ignore_state():

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import os
+import os  # kept for TELEGRAM_BOT_TOKEN
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,7 @@ from .handlers import (
     cmd_memory,
     cmd_model,
     cmd_mood,
+    cmd_photo,
     cmd_silence,
     cmd_stage,
     cmd_start,
@@ -30,7 +31,7 @@ from .handlers import (
     session_timeout_callback,
 )
 from .heartbeat import run_heartbeat
-from .memory import get_heartbeat_state
+from .memory import get_heartbeat_state, list_all_user_ids, set_current_user
 from .reflect import run_reflection
 
 load_dotenv()
@@ -50,22 +51,6 @@ def _load_settings() -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def _get_chat_id() -> int | None:
-    """Get the configured Telegram chat ID (first allowed user or env override)."""
-    chat_id_env = os.environ.get("TELEGRAM_CHAT_ID")
-    if chat_id_env:
-        try:
-            return int(chat_id_env)
-        except ValueError:
-            pass
-
-    settings = _load_settings()
-    allowed = settings.get("telegram", {}).get("allowed_user_ids", [])
-    if allowed:
-        return allowed[0]
-    return None
-
-
 def build_application() -> Application:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -83,6 +68,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("stage", cmd_stage))
+    app.add_handler(CommandHandler("photo", cmd_photo))
     app.add_handler(CommandHandler("help", cmd_help))
 
     # Messages
@@ -96,52 +82,53 @@ async def _setup_scheduler(app: Application) -> AsyncIOScheduler:
     settings = _load_settings()
     scheduler = AsyncIOScheduler()
 
-    # Session timeout: check every minute if we should consolidate
+    # Session timeout: check every minute per user if we should consolidate
     session_timeout = settings.get("session", {}).get("timeout_minutes", 30)
-    last_check: dict[str, Any] = {"last_message_ts": None}
+    # Track last seen message timestamp per user to avoid double-firing
+    _last_seen: dict[int, Any] = {}
 
     async def session_check() -> None:
-        state = get_heartbeat_state()
-        last_user_raw = state.get("last_user_message")
-        if not last_user_raw:
-            return
+        for uid in list_all_user_ids():
+            set_current_user(uid)
+            state = get_heartbeat_state()
+            last_user_raw = state.get("last_user_message")
+            if not last_user_raw:
+                continue
 
-        try:
-            last_user = datetime.fromisoformat(str(last_user_raw))
-            if last_user.tzinfo is None:
-                last_user = last_user.replace(tzinfo=UTC)
-        except (ValueError, TypeError):
-            return
+            try:
+                last_user = datetime.fromisoformat(str(last_user_raw))
+                if last_user.tzinfo is None:
+                    last_user = last_user.replace(tzinfo=UTC)
+            except (ValueError, TypeError):
+                continue
 
-        elapsed = (datetime.now(UTC) - last_user).total_seconds()
-        if elapsed >= session_timeout * 60:
-            # Only trigger once per session (check if it's a new timeout event)
-            prev = last_check.get("last_message_ts")
-            if prev != last_user_raw:
-                last_check["last_message_ts"] = last_user_raw
-                await session_timeout_callback()
+            elapsed = (datetime.now(UTC) - last_user).total_seconds()
+            if elapsed >= session_timeout * 60:
+                prev = _last_seen.get(uid)
+                if prev != last_user_raw:
+                    _last_seen[uid] = last_user_raw
+                    await session_timeout_callback(uid)
 
     scheduler.add_job(session_check, IntervalTrigger(minutes=1), id="session_check")
 
-    # Heartbeat: check every 15 minutes (actual send respects the interval setting)
-    chat_id = _get_chat_id()
-
+    # Heartbeat: check every 15 minutes per user
     async def heartbeat_check() -> None:
-        if chat_id is None:
-            return
+        for uid in list_all_user_ids():
+            set_current_user(uid)
 
-        async def send_fn(text: str) -> None:
-            await app.bot.send_message(chat_id=chat_id, text=text)
+            async def send_fn(text: str, _uid: int = uid) -> None:
+                await app.bot.send_message(chat_id=_uid, text=text)
 
-        await run_heartbeat(send_fn)
+            await run_heartbeat(send_fn)
 
     scheduler.add_job(heartbeat_check, IntervalTrigger(minutes=15), id="heartbeat_check")
 
-    # Daily reflection: run at configured hour
+    # Daily reflection: run at configured hour for each user
     reflection_hour = settings.get("memory", {}).get("reflection_hour", 9)
 
     async def daily_reflection() -> None:
-        await run_reflection()
+        for uid in list_all_user_ids():
+            await run_reflection(uid)
 
     scheduler.add_job(
         daily_reflection,
@@ -155,14 +142,6 @@ async def _setup_scheduler(app: Application) -> AsyncIOScheduler:
 
 
 def main() -> None:
-    settings = _load_settings()
-    starting_stage_env = settings.get("trust", {}).get("starting_stage", 0)
-
-    # Set initial trust stage if starting fresh
-    from .memory import set_trust_stage
-    if starting_stage_env == 3:
-        set_trust_stage(3)
-
     app = build_application()
 
     async def post_init(application: Application) -> None:

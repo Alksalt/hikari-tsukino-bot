@@ -14,11 +14,14 @@ _ORIG_DATA_DIR: Path | None = None
 
 @pytest.fixture(autouse=True)
 def isolated_data_dir(monkeypatch, tmp_path):
-    """Redirect all data file paths to a temp directory."""
+    """Redirect all data file paths to a temp directory (per-user layout)."""
     import bot.memory as mem
 
-    (tmp_path / "episodes").mkdir()
-    (tmp_path / "USER.md").write_text(
+    # Create per-user structure under tmp_path/users/0/
+    user_dir = tmp_path / "users" / "0"
+    user_dir.mkdir(parents=True)
+    (user_dir / "episodes").mkdir()
+    (user_dir / "USER.md").write_text(
         "# User Profile\n\n"
         "## basics\n"
         "- name: unknown\n"
@@ -29,24 +32,20 @@ def isolated_data_dir(monkeypatch, tmp_path):
         "## last_updated: never\n",
         encoding="utf-8",
     )
-    (tmp_path / "MEMORY.md").write_text(
+    (user_dir / "MEMORY.md").write_text(
         "# Long-Term Memory\n\n## about the user\nnone yet\n\n## shared canon\nnone yet\n",
         encoding="utf-8",
     )
-    (tmp_path / "THOUGHTS.md").write_text("# Hikari's Thoughts\nnone yet\n", encoding="utf-8")
+    (user_dir / "THOUGHTS.md").write_text("# Hikari's Thoughts\nnone yet\n", encoding="utf-8")
     hb_content = (
         "# Heartbeat State\n\n"
         "silence_until: null\nlast_proactive_sent: null\n"
         "last_user_message: null\nused_excuses: []\nproactive_count: 0\n"
     )
-    (tmp_path / "HEARTBEAT.md").write_text(hb_content, encoding="utf-8")
+    (user_dir / "HEARTBEAT.md").write_text(hb_content, encoding="utf-8")
 
-    monkeypatch.setattr(mem, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(mem, "EPISODES_DIR", tmp_path / "episodes")
-    monkeypatch.setattr(mem, "USER_MD", tmp_path / "USER.md")
-    monkeypatch.setattr(mem, "MEMORY_MD", tmp_path / "MEMORY.md")
-    monkeypatch.setattr(mem, "THOUGHTS_MD", tmp_path / "THOUGHTS.md")
-    monkeypatch.setattr(mem, "HEARTBEAT_MD", tmp_path / "HEARTBEAT.md")
+    monkeypatch.setattr(mem, "_BASE_DATA_DIR", tmp_path)
+    mem.set_current_user(0)
 
     yield tmp_path
 
@@ -208,8 +207,8 @@ def test_used_excuses_capped_at_5():
 # ---------------------------------------------------------------------------
 
 
-def test_append_thought():
-    from bot.memory import THOUGHTS_MD, append_thought, read_file
+def test_append_thought(isolated_data_dir):
+    from bot.memory import append_thought
     append_thought("i keep thinking about what they said about that dataset.")
-    content = read_file(THOUGHTS_MD)
+    content = (isolated_data_dir / "users" / "0" / "THOUGHTS.md").read_text(encoding="utf-8")
     assert "dataset" in content
